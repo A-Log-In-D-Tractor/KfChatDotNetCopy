@@ -1,0 +1,459 @@
+using System.Net.Http.Headers;
+using RandN;
+using RandN.Compat;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Formats.Webp;
+using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Drawing;
+using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.Fonts;
+using System.Text.RegularExpressions;
+using KfChatDotNetBot.Extensions;
+using KfChatDotNetBot.Migrations;
+using KfChatDotNetBot.Models;
+using KfChatDotNetBot.Models.DbModels;
+using KfChatDotNetBot.Services;
+using KfChatDotNetBot.Settings;
+using KfChatDotNetWsClient.Models.Events;
+using Money = KfChatDotNetBot.Services.Money;
+
+namespace KfChatDotNetBot.Commands.Kasino;
+
+public class RouletteCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        //new Regex(@"^roulette\s+((?<bet>\d+\.\d+,\d+)\s*)$", RegexOptions.IgnoreCase),
+        new Regex(@"^roulette\s+(?<betString>.+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^roulette$", RegexOptions.IgnoreCase)
+        
+    ];
+
+    public string? HelpText =>
+        "!roulette <bet, subject>etc for all subjects. EX: !roulette 123.5,0 40,red 10,1strow 5,1st12 - this puts a bet of 123.5 on 0, 40 on red, 10 on the first row, and 5 on the first";
+
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+
+    public RateLimitOptionsModel? RateLimitOptions => new()
+    {
+        MaxInvocations = 1,
+        Window = TimeSpan.FromSeconds(30)
+    };
+    
+    //valid bets are: 0 - 36 = corresponding number | 37 = green | 38 = red | 39 = black | 40 = 1-18 | 41 = 19-36 | 42 = 1st 12 | 43 = 2nd 12 | 44 = 3rd 12 | 45 = 1st row | 46 = 2nd row | 47 = 3rd row | 48 = Even | 49 = Odd
+    private const decimal numberPayout = 35;
+    private const decimal twelveOrRowPayout = 3;
+    private const decimal colorOrEighteenPayout = 2;
+    private static readonly int[] WheelNumbers = { 
+        0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26 
+    };
+    private static readonly Dictionary<RouletteNumberProperties, decimal> payoutBoard = new()
+    {
+        { RouletteNumberProperties.FirstRow,   twelveOrRowPayout },
+        { RouletteNumberProperties.SecondRow,  twelveOrRowPayout },
+        { RouletteNumberProperties.ThirdRow,   twelveOrRowPayout },
+
+            
+        { RouletteNumberProperties.First18,    colorOrEighteenPayout  },
+        { RouletteNumberProperties.Second18,   colorOrEighteenPayout  },
+
+            
+        { RouletteNumberProperties.First12,    twelveOrRowPayout  },
+        { RouletteNumberProperties.Second12,   twelveOrRowPayout  },
+        { RouletteNumberProperties.Third12,    twelveOrRowPayout  },
+
+           
+        { RouletteNumberProperties.Black,      colorOrEighteenPayout },
+        { RouletteNumberProperties.Red,        colorOrEighteenPayout },
+
+          
+        { RouletteNumberProperties.Even,       colorOrEighteenPayout },
+        { RouletteNumberProperties.Odd,        colorOrEighteenPayout },
+
+        
+        { RouletteNumberProperties.Value,      numberPayout }
+    };
+    
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromMinutes(1);
+        if (!arguments.TryGetValue("betString", out var betStr))
+        {
+            await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, you must place a bet to play roulette. !roulette <bet,subject> <bet,subject> - !roulette 5,0 5,red, 5,2nd18 5,1strow 5,even 5,1st12", autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        
+        //collect all the bets the user made
+        var pattern = @"(?<amount>\d+),(?<subject>[\w]+)";
+        var pattern2 = @"(?<amount>\d+\.\d+),(?<subject>[\w]+";
+        List<Match> allMatches = new List<Match>();
+        allMatches.AddRange(Regex.Matches(betStr.Value, pattern, RegexOptions.IgnoreCase));
+        allMatches.AddRange(Regex.Matches(betStr.Value, pattern2, RegexOptions.IgnoreCase));
+        if (allMatches.Count == 0)
+        {
+            await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid betting format. !roulette <bet,subject> <bet,subject> - !roulette 5,0 5,red, 5,2nd18 5,1strow 5,even 5,1st12", autoDeleteAfter: cleanupDelay);
+            return;
+        }
+
+        
+        decimal value;
+        RouletteNumberProperties prop;
+        decimal totalBetValue = 0;
+        List<RouletteBet> userBet = new List<RouletteBet>();
+        foreach (var match in allMatches) //handles the logic for creating a list of user bets. user bets contain a decimal bet amount, and RouletteNumberProperties subject. If the subject is "value" (aka number) it will also have a number, which defaults to -1
+        {
+            if (!int.TryParse(match.Groups["subject"].Value, out var number))
+            {
+                //now we know its not a number so it must be one of the other ones
+                string subject =  match.Groups["subject"].Value;
+                switch (subject)
+                {
+                    case "1strow":
+                        prop = RouletteNumberProperties.FirstRow;
+                        break;
+                    case "2ndrow":
+                        prop = RouletteNumberProperties.SecondRow;
+                        break;
+                    case "3rdrow":
+                        prop = RouletteNumberProperties.ThirdRow;
+                        break;
+                    case "1st18":
+                        prop = RouletteNumberProperties.First18;
+                        break;
+                    case "2nd18":
+                        prop = RouletteNumberProperties.Second18;
+                        break;
+                    case "1st12":
+                        prop = RouletteNumberProperties.First12;
+                        break;
+                    case "2nd12":
+                        prop = RouletteNumberProperties.Second12;
+                        break;
+                    case "3rd12":
+                        prop =  RouletteNumberProperties.Third12;
+                        break;
+                    case "black" or "Black":
+                        prop = RouletteNumberProperties.Black;
+                        break;
+                    case "red" or "Red":
+                        prop = RouletteNumberProperties.Red;
+                        break;
+                    case "even" or "Even":
+                        prop = RouletteNumberProperties.Even;
+                        break;
+                    case "odd" or "Odd":
+                        prop = RouletteNumberProperties.Odd;
+                        break;
+                    case "green" or  "Green":
+                        prop = RouletteNumberProperties.Value;
+                        break;
+                    default:
+                        await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid betting option. Valid options are: Numbers from 0 - 36, even, odd, red, black, green, 1st18, 2nd18, 1st12, 2nd12, 3rd12, 1strow, 2ndrow, 3rdrow", autoDeleteAfter: cleanupDelay);
+                        return;
+                }
+
+                value = Convert.ToDecimal(match.Groups["amount"].Value);
+                userBet.Add(new RouletteBet(value, prop));
+                totalBetValue += value;
+
+            }
+            else //numbers
+            {
+                value =  Convert.ToDecimal(match.Groups["amount"].Value);
+                prop = RouletteNumberProperties.Value;
+                int num = Convert.ToInt32(match.Groups["subject"].Value);
+                if (num < 0 || num > 36)
+                {
+                    await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, must bet on a number from 0 - 36", autoDeleteAfter: cleanupDelay);
+                    return;
+                }
+                userBet.Add(new RouletteBet(value, prop, num));
+                totalBetValue += value;
+            }
+        }
+
+        
+
+        List<RouletteNumber> RouletteNumbers = new()
+        {
+            new RouletteNumber(0, RouletteNumberProperties.Green)
+        }; 
+        for (int i = 1; i <= 36; i++)
+        {
+            if (i%2==0 && (i<=10 || (i>=20 && i<=28))) RouletteNumbers.Add(new RouletteNumber(i, RouletteNumberProperties.Black));
+            else if (i%2!=0 && !(i<=10 || (i>=20 && i<=28))) RouletteNumbers.Add(new RouletteNumber(i, RouletteNumberProperties.Black));
+            else RouletteNumbers.Add(new RouletteNumber(i, RouletteNumberProperties.Red));
+        }
+        //create a list of roulette numbers and add all their appropriate properties, used for calculating the payout
+        
+        //we now have list of userbets with appropriate properties
+
+        var rouletteGame = await PlayGame(); //run the game
+        var imageUrl = await Zipline.Upload(rouletteGame.stream, new MediaTypeHeaderValue("image/webp"), "1h", ctx); //upload image and get url
+        var payout = CalculatePayout(userBet, RouletteNumbers[rouletteGame.winner], rouletteGame.multis); //calculate the payout and get an add on string for the end of the payout message, with all the individual bets won
+        var rawwinnings = payout.payout;
+        var netwinnings = rawwinnings - totalBetValue;
+        var newBalance = await Money.NewWagerAsync(gambler.Id, totalBetValue, netwinnings, WagerGame.Roulette, ct: ctx);
+        bool win = netwinnings > totalBetValue;
+        string winstr = win ? "[color=green]won[/color]" : "[color=red]lost[/color]";
+        string payoutstr = payout.payoutstr;
+        netwinnings = Math.Abs(netwinnings);
+        await botInstance.SendChatMessageAsync($"[img]{imageUrl}[/img]", autoDeleteAfter: cleanupDelay);
+        await botInstance.SendChatMessageAsync(
+            $"{user.FormatUsername()}, you {winstr} {netwinnings.FormatKasinoCurrencyAsync()} from a {totalBetValue.FormatKasinoCurrencyAsync()} bet. Balance: {newBalance.FormatKasinoCurrencyAsync()}.[br]{payoutstr}");
+
+    }
+
+    private (decimal payout,string payoutstr) CalculatePayout(List<RouletteBet> bets, RouletteNumber winner, List<(int n, int m)> lightningMultis)
+    {
+        decimal payout = 0;
+        bool lightning;
+        decimal lightningMulti = 0;
+        string payoutstr = "";
+        foreach (var bet in bets)
+        {
+            lightning = false;
+            if (bet.NUMBER == winner.NUMBER)
+            {
+                foreach (var l in lightningMultis)
+                {
+                    if (l.n == bet.NUMBER) //if you got a lightning multi
+                    {
+                        lightningMulti = l.m;
+                        lightning = true;
+                        break;
+                    }
+                }
+                if (!lightning)
+                {
+                    payout += bet.WAGER * payoutBoard[bet.PROPERTY];
+                    payoutstr +=
+                        $"You won {payout.FormatKasinoCurrencyAsync()} from your bet of {bet.WAGER.FormatKasinoCurrencyAsync()} for the ball landing on {winner.NUMBER}.[br]";
+                }
+                else
+                {
+                    payout += bet.WAGER * payoutBoard[bet.PROPERTY] * lightningMulti;
+                    payoutstr +=
+                        $"⚡⚡⚡ You won {payout.FormatKasinoCurrencyAsync()} from your bet of {bet.WAGER.FormatKasinoCurrencyAsync()} for the ball landing on {winner.NUMBER} with a ⚡{lightningMulti} multiplier! ⚡⚡⚡[br])";
+                }
+                
+            }
+            else if (winner.PROPERTIES.Contains(bet.PROPERTY))
+            {
+                payout += bet.WAGER * payoutBoard[bet.PROPERTY];
+                payoutstr +=
+                    $"You won {payout.FormatKasinoCurrencyAsync()} from your bet of {bet.WAGER.FormatKasinoCurrencyAsync()} on {bet.PROPERTY} for the ball landing on {winner.NUMBER}.[br])";
+            }
+        }
+        
+        return (payout,payoutstr);
+    }
+    public record LuckyMultiplier(int WheelIndex, int MultiValue, Color ThemeColor, bool IsGold);
+    
+    public async Task<(int winner, MemoryStream stream, List<(int num, int multi)> multis)> PlayGame()
+    {
+        // 1. Setup Luckies with Weighted Multipliers
+        var luckyIndices = Enumerable.Range(0, 37).OrderBy(_ => Random.Shared.Next()).Take(3).ToList();
+        var values = new List<int> { GetWeightedValue(), GetWeightedValue(), GetWeightedValue() };
+        values.Sort(); // Smallest to Largest
+
+        // Colors: Purple (Smallest), Blue, Gold (Largest)
+        var multipliers = new List<LuckyMultiplier> {
+            new LuckyMultiplier(luckyIndices[0], values[0], Color.MediumPurple, false),
+            new LuckyMultiplier(luckyIndices[1], values[1], Color.DeepSkyBlue, false),
+            new LuckyMultiplier(luckyIndices[2], values[2], Color.Gold, true)
+        };
+
+        // 2. Generate Animation
+        var (winner, ms) = GenerateAnimation(multipliers);
+        var resultMultis = multipliers.Select(m => (WheelNumbers[m.WheelIndex], m.MultiValue)).ToList();
+        
+        return (winner, ms, resultMultis);
+    }
+
+    private int GetWeightedValue()
+    {
+        int r = Random.Shared.Next(1, 101);
+        if (r <= 60) return Random.Shared.Next(25, 100);
+        if (r <= 90) return Random.Shared.Next(100, 250);
+        return Random.Shared.Next(250, 501);
+    }
+
+    private Image<Rgba32> DrawWheelBase(List<LuckyMultiplier> luckies)
+    {
+        var img = new Image<Rgba32>(500, 500);
+        float centerX = 250, centerY = 250, outerRadius = 245, innerRadius = 170, step = 360f / 37f;
+
+        img.Mutate(ctx => {
+            for (int i = 0; i < 37; i++) {
+                float startAngle = i * step - (step / 2) - 90;
+                var lucky = luckies.FirstOrDefault(l => l.WheelIndex == i);
+                
+                var baseColor = WheelNumbers[i] == 0 ? Color.Green : (i % 2 == 0 ? Color.DarkRed : Color.Black);
+                var segmentColor = lucky != null ? lucky.ThemeColor : baseColor;
+
+                var path = new PathBuilder().AddArc(centerX, centerY, outerRadius, outerRadius, 0, startAngle, step)
+                    .AddArc(centerX, centerY, innerRadius, innerRadius, 0, startAngle + step, -step).Build();
+                
+                ctx.Fill(segmentColor, path);
+
+                if (lucky != null && lucky.IsGold) {
+                    ctx.Draw(Color.Gold.WithAlpha(0.6f), 6, path); // Gold Aura
+                }
+                ctx.Draw(Color.Gold, 1, path);
+
+                // Draw Wheel Numbers (Slightly Bigger)
+                float textAngle = (startAngle + (step / 2)) * MathF.PI / 180;
+                float tx = centerX + ((outerRadius + innerRadius) / 2) * MathF.Cos(textAngle);
+                float ty = centerY + ((outerRadius + innerRadius) / 2) * MathF.Sin(textAngle);
+                try {
+                    var font = SystemFonts.CreateFont("Arial", 18, FontStyle.Bold);
+                    ctx.DrawText(new DrawingOptions { Transform = Matrix3x2Extensions.CreateRotationDegrees(startAngle + (step / 2) + 90, new PointF(tx, ty)) }, 
+                        WheelNumbers[i].ToString(), font, Color.White, new PointF(tx - 8, ty - 11));
+                } catch { }
+            }
+            ctx.Fill(Color.DarkSlateGray, new EllipsePolygon(centerX, centerY, innerRadius - 5));
+        });
+        return img;
+    }
+
+    public (int number, MemoryStream stream) GenerateAnimation(List<LuckyMultiplier> luckies)
+    {
+        using var board = DrawWheelBase(luckies);
+        int fps = 20;
+        int totalFrames = fps * 7;
+        using var animation = new Image<Rgba32>(500, 500);
+
+        int winningIndex = Random.Shared.Next(0, 37);
+        float endWheelRotation = 720f + Random.Shared.Next(0, 360);
+        float finalBallAngle = endWheelRotation + (winningIndex * (360f / 37f)) - 90;
+
+        for (int i = 0; i < totalFrames; i++)
+        {
+            float progress = (float)i / totalFrames;
+            float ease = 1f - MathF.Pow(1f - progress, 3);
+
+            float currentWheelAngle = endWheelRotation * ease;
+            float startBallAngle = finalBallAngle + 1800f; // Extra laps for CCW
+            float currentBallAngle = startBallAngle - ((startBallAngle - finalBallAngle) * ease);
+
+            using var frame = new Image<Rgba32>(500, 500);
+            frame.Mutate(ctx => {
+                using var rotatedBoard = board.Clone(b => b.Rotate(currentWheelAngle));
+                ctx.DrawImage(rotatedBoard, new Point(250 - (rotatedBoard.Width / 2), 250 - (rotatedBoard.Height / 2)), 1f);
+                
+                DrawTriangleLuckies(ctx, luckies);
+
+                float dropT = MathF.Max(0, (progress - 0.7f) / 0.3f);
+                float radius = 230 - (45 * MathF.Pow(dropT, 2));
+                float rads = currentBallAngle * MathF.PI / 180;
+                ctx.Fill(Color.White, new EllipsePolygon(250 + radius * MathF.Cos(rads), 250 + radius * MathF.Sin(rads), 14));
+            });
+
+            frame.Frames.RootFrame.Metadata.GetWebpMetadata().FrameDelay = (uint)(1000 / fps);
+            animation.Frames.AddFrame(frame.Frames.RootFrame);
+        }
+
+        animation.Frames.RemoveFrame(0);
+        var ms = new MemoryStream();
+        animation.SaveAsWebp(ms, new WebpEncoder { FileFormat = WebpFileFormatType.Lossy, Quality = 50 });
+        ms.Position = 0;
+        return (WheelNumbers[winningIndex], ms);
+    }
+
+    private void DrawTriangleLuckies(IImageProcessingContext ctx, List<LuckyMultiplier> luckies)
+    {
+        var points = new[] { new PointF(250, 195), new PointF(185, 295), new PointF(315, 295) };
+        var font = SystemFonts.CreateFont("Arial", 45, FontStyle.Bold);
+
+        for (int i = 0; i < luckies.Count; i++)
+        {
+            string text = $"{luckies[i].MultiValue}x";
+            PointF loc = new PointF(points[i].X - 45, points[i].Y - 25);
+
+            // Glow logic
+            int passes = luckies[i].IsGold ? 10 : 5;
+            for (int g = passes; g >= 1; g--) {
+                ctx.DrawText(text, font, luckies[i].ThemeColor.WithAlpha(0.1f * g), new PointF(loc.X - g/2f, loc.Y - g/2f));
+            }
+            ctx.DrawText(text, font, Color.White, loc);
+        }
+    }
+    public static List<RouletteNumberProperties> GetNumberProperties(int number) //used to check all the properties of a number to match against the bet
+    {
+        List<RouletteNumberProperties> prop = new List<RouletteNumberProperties>();
+        prop.Add(RouletteNumberProperties.Value);
+        if (number == 0) return prop;
+        
+        if (number % 2 == 0) prop.Add(RouletteNumberProperties.Even);
+        else prop.Add(RouletteNumberProperties.Odd);
+        
+        if (number <= 12) prop.Add(RouletteNumberProperties.First12);
+        else if (number <= 24) prop.Add(RouletteNumberProperties.Second12);
+        else prop.Add(RouletteNumberProperties.Third12);
+        
+        if (number <= 18) prop.Add(RouletteNumberProperties.First18);
+        else prop.Add(RouletteNumberProperties.Second18);
+        
+        if (number%3==0) prop.Add(RouletteNumberProperties.ThirdRow);
+        else if (number%3==1) prop.Add(RouletteNumberProperties.FirstRow);
+        else prop.Add(RouletteNumberProperties.SecondRow);
+
+        return prop;
+
+    }
+    
+}
+
+public class RouletteBet
+{
+    public RouletteNumberProperties PROPERTY;
+    public decimal WAGER;
+    public int NUMBER;
+
+    public RouletteBet(decimal wager, RouletteNumberProperties subject, int number = -1)
+    {
+        WAGER = wager;
+        PROPERTY = subject;
+        NUMBER = number;
+    }
+}
+
+public class RouletteNumber
+{
+    public List<RouletteNumberProperties> PROPERTIES;
+    public int NUMBER;
+    private RouletteNumberProperties COLOR;
+    public RouletteNumber(int num, RouletteNumberProperties col)
+    {
+        NUMBER = num;
+        COLOR = col;
+        PROPERTIES = RouletteCommand.GetNumberProperties(NUMBER);
+        PROPERTIES.Add(COLOR);
+    }
+
+}
+
+public enum RouletteNumberProperties
+{
+    Even,
+    Odd,
+    Black,
+    Red,
+    Green,
+    First18,
+    Second18,
+    First12,
+    Second12,
+    Third12,
+    FirstRow,
+    SecondRow,
+    ThirdRow,
+    Value
+}
