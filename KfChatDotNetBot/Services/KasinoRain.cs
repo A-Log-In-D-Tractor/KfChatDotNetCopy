@@ -91,7 +91,8 @@ public class KasinoRain : IDisposable
                 await _kfChatBot.SendChatMessageAsync(
                     $"Nobody participated in {creator.User.FormatUsername()}'s rain!",
                     true, autoDeleteAfter: TimeSpan.FromSeconds(30));
-                continue;
+                await RemoveRainState();
+                return;
             }
 
             if (rain.RainAmount > creator.Balance)
