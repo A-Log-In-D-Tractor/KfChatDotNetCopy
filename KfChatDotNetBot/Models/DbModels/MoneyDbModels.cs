@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 
 namespace KfChatDotNetBot.Models.DbModels;
@@ -278,7 +278,23 @@ public enum TransactionSourceEventType
     ///<summary>
     ///A form of juicer where the value is split among a number of participants
     /// </summary>
-    Rain
+    Rain,
+    /// <summary>
+    /// A form of income for those who have a car, you can drive derrick around and make him feel special
+    /// </summary>
+    Job,
+    /// <summary>
+    /// A way for users to loan money to each other
+    /// </summary>
+    Loan,
+    /// <summary>
+    /// Money withdrawn into the KasinoShop system
+    /// </summary>
+    Withdraw,
+    /// <summary>
+    /// Money deposited from the KasinoShop system into the Kasino
+    /// </summary>
+    Deposit
 }
 
 public enum WagerGame
