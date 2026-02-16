@@ -112,6 +112,11 @@ public class KasinoShop
         }
     }
 
+    public async Task PrintDrugMarket(GamblerDbModel gambler)
+    {
+        
+    }
+    
     public async Task ProcessDrugUse(GamblerDbModel gambler, decimal amount, int drug)
     {
         
@@ -350,6 +355,13 @@ public class KasinoShop
 
         await SaveProfiles();
     }
+
+    public async Task ProcessCarPurchase(GamblerDbModel gambler, int carId)
+    {
+        
+    }
+    
+    
     
     public async Task ProcessWager(GamblerDbModel gambler, WagerGame game, decimal amount)
     {
@@ -389,7 +401,7 @@ public class KasinoShop
             $"{gambler.User.FormatUsername()}, you staked {await amount.FormatKasinoCurrencyAsync()} crypto.[br] {Gambler_Profiles[gambler.User.KfId].Assets[id]} {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}");
         await SaveProfiles();
     }
-
+    
     public async Task ProcessAssetSale(GamblerDbModel gambler, int assetId)
     {
         if (!Gambler_Profiles[gambler.User.KfId].Assets.ContainsKey(assetId))
@@ -398,6 +410,39 @@ public class KasinoShop
             return;
         }
         var asset = Gambler_Profiles[gambler.User.KfId].Assets[assetId];
+        int cooldown;
+        if (asset is Investment inv)
+        {
+            switch (inv.investment_type)
+            {
+                case InvestmentType.Gold or InvestmentType.Silver:
+                    cooldown = (DateTime.UtcNow - inv.acquired).Days;
+                    if (cooldown < 5)
+                    {
+                        await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you can't sell your {inv.investment_type} investment yet, It's been less than 5 days since you bought it. {cooldown} days until it arrives.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                        return;
+                    }
+
+                    break;
+                case InvestmentType.Stake:
+                    cooldown = (DateTime.UtcNow - inv.acquired).Days;
+                    if (cooldown < 7)
+                    {
+                        await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you can't sell your Stake yet, {cooldown} days until it unlocks.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                        return;
+                    }
+
+                    break;
+            }
+        }
+        else if (asset is Smashable smash)
+        {
+            await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, nobody wants to buy your shitty {smash}.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            return;
+        }
+        
+        
+        
         Gambler_Profiles[gambler.User.KfId].Assets.Remove(assetId);
         Gambler_Profiles[gambler.User.KfId].ModifyBalance(asset.GetCurrentValue());
         await BotInstance.SendChatMessageAsync(
@@ -492,7 +537,6 @@ public class KasinoShop
         public bool IsCracked;
         public bool IsInWithdrawal;
         public bool IsLoanable;
-        private DrugMarket? _dMarket = null;
         private SkinMarket? _sMarket = null;
         private CancellationTokenSource CrackToken = new();
         private CancellationTokenSource WeedToken = new();
@@ -600,7 +644,7 @@ public class KasinoShop
 
         public async Task SmokeWeed(TimeSpan buffLength)
         {
-            WeedNugs++;
+            FloorNugs++;
             CancellationToken wToken = WeedToken.Token;
             CancellationToken cToken = CrackToken.Token;
             if (IsWeeded)
@@ -645,7 +689,7 @@ public class KasinoShop
             CryptoBalance -= amount;
         }
         
-        public 
+        
         
 
         
@@ -874,25 +918,84 @@ public class KasinoShop
 
     public class Smashable : Asset // computer equipment
     {
-        public decimal value;
-        public string name;
-        public AssetType type = AssetType.Smashable;
-        public DateTime acquired;
+        
+        public new AssetType type = AssetType.Smashable;
+
+        public Smashable()
+        {
+            
+        }
+
+        public override decimal GetCurrentValue()
+        {
+            return originalValue;
+        }
     }
 
     
     public class Car : Asset
     {
-        public decimal value;
-        public string name;
-        public AssetType type = AssetType.Car;
-        public DateTime acquired;
+        private decimal _currentValue;
+        public new AssetType type = AssetType.Car;
+        public Cars car_type;
         public decimal job_value;
-
         
-        public async Task WorkJob(int gamblerId)
+        [Obsolete("Dont use base constructor", true)]
+        public Car()
         {
-            await Money.ModifyBalanceAsync(gamblerId, job_value, TransactionSourceEventType.Job);
+            throw new Exception("Car should not be instantiated directly. Use Car(int id, string name, decimal value, Cars car_type, decimal job_value)");
+        }
+        public Car(Cars type)
+        {
+            acquired = DateTime.UtcNow;
+            car_type = type;
+            _currentValue = CarPrices[type];
+            originalValue = _currentValue;
+            job_value = CarPrices[type] / 10;
+            name = type.ToString();
+            ValueChangeReports = new();
+        }
+
+        public override decimal GetCurrentValue()
+        {
+            return _currentValue;
+        }
+
+        public async Task SetId(GamblerDbModel gambler) //sets the id of the car to a unique number when you buy it so you can interact with it later 
+        {
+            int id = Money.GetRandomNumber(gambler, 0, 999999999);
+            int counter = 0;
+            for (int i = 0;
+                 i < BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].Assets.Count;
+                 i++)
+            {
+                if (BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].Assets.ElementAt(i).Value.Id == id)
+                {
+                    id = Money.GetRandomNumber(gambler, 0, 999999999);
+                    i = -1;
+                    counter++;
+                    if (counter > 10000)
+                    {
+                        throw new Exception("failed to generate unique ID for car after 10000 attempts");
+                    }
+                }
+            }
+        }
+
+        public async Task ProcessWorkJob(GamblerDbModel gambler)
+        {
+            decimal oldVal = _currentValue;
+            _currentValue -= job_value / 5;
+            ValueChangeReports.Add(new AssetValueChangeReport(-job_value / 5, (_currentValue - oldVal) / oldVal, DateTime.UtcNow));
+            if (_currentValue <= 0) // if your car dies it gets removed from your asset list
+            {
+                BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].Assets.Remove(Id);
+            }
+        }
+
+        public override string ToString()
+        {
+            return $"{type} {name} worth ${GetCurrentValue()}";
         }
         
     }
@@ -919,28 +1022,23 @@ public class KasinoShop
             return DateTime.UtcNow - _opened > TimeSpan.FromDays(1);
         }
     }
-
     
 
-    public class CarMarket
-    {
-        
-    }
-
-    public class DrugMarket
-    {
-        
-    }
-
-    public decimal CrackPrice = 10000m;
-    public decimal WeedPricePerHour = 1000m;
-    public TimeSpan WeedNugLength = TimeSpan.FromMinutes(6);
+    public static readonly decimal CrackPrice = 10000m;
+    public static readonly decimal WeedPricePerHour = 1000m;
+    public static readonly TimeSpan WeedNugLength = TimeSpan.FromMinutes(6);
     
-    public static (decimal min, decimal max) ShoeAprRange = (-0.05m, 0.05m);
-    public static decimal[] CsSkinAprRange = { -0.25m, 0.25m };
-    public static (decimal min, decimal max) CsSkinBaseValueRange = (5000m, 2_000_000m);
+    public static readonly decimal[] ShoeAprRange = { -0.05m, 0.05m };
+    public static readonly decimal[] CsSkinAprRange = { -0.25m, 0.25m };
     public static decimal HomeApr = 0.1m;
     
+    public static readonly Dictionary<Cars, Car> DefaultCars = new()
+    {
+        {Cars.Civic, new Car(Cars.Civic)},
+        {Cars.Audi, new Car(Cars.Audi)},
+        {Cars.Bentley, new Car(Cars.Bentley)},
+        {Cars.Bmw, new Car(Cars.Bmw)}
+    };
     public static readonly Dictionary<Cars, decimal> CarPrices = new()
     {
         { Cars.Civic , 2_000_000 },
@@ -1133,6 +1231,8 @@ public class KasinoShop
         
     };
 
+    
+
     public static readonly Dictionary<bool, string> AssetValueIncreaseIndicator = new() { {false, "🔻"}, {true, "🔺"} };
     public static readonly Dictionary<bool, string> AssetValueIncreaseColor = new() { {false, "red"}, {true, "lightgreen"} };
     
@@ -1201,7 +1301,6 @@ public enum AssetType
 {
     Investment,
     Smashable,
-    Trophy,
     Car,
     Random
 }
