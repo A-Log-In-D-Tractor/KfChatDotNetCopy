@@ -592,10 +592,11 @@ public class ShopWithdrawCommand : ICommand
             string wagerLock = "";
             if (!botInstance.BotServices.KasinoShop.CheckWagerReq(gambler))
             {
-                wagerLock += $", and you need to finish your wager requirement before you can withdraw. {";
+                wagerLock +=
+                    $", and you need to finish your wager requirement before you can withdraw. {await botInstance.BotServices.KasinoShop.RemainingWagerReq(gambler).FormatKasinoCurrencyAsync()} remaining to be wagered before you can withdraw.";
             }
             await botInstance.SendChatMessageAsync(
-                $"{user.FormatUsername()}, you can withdraw from your kasino balance of {await gambler.Balance.FormatKasinoCurrencyAsync()}. You must withdraw a minimum of {await 5000m.FormatKasinoCurrencyAsync()}.",
+                $"{user.FormatUsername()}, you can withdraw from your kasino balance of {await gambler.Balance.FormatKasinoCurrencyAsync()}. You must withdraw a minimum of {await 5000m.FormatKasinoCurrencyAsync()}{wagerLock}.",
                 true, autoDeleteAfter: cleanupDelay);
             return;
         }
