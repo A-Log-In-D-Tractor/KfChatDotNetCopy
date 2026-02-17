@@ -114,7 +114,14 @@ public class KasinoShop
 
     public async Task PrintDrugMarket(GamblerDbModel gambler)
     {
-        
+        int cc = Gambler_Profiles[gambler.User.KfId].CrackCounter;
+        List<string> drugs = new();
+        drugs.Add($"1. Crack: {await (CrackPrice * cc).FormatKasinoCurrencyAsync()} per dose");
+        drugs.Add($"2. Weed: {await WeedPricePerHour.FormatKasinoCurrencyAsync()} per hour");
+        if (Gambler_Profiles[gambler.User.KfId].FloorNugs > 0)
+        {
+            drugs.Add($"3. Floor Nugs: {Gambler_Profiles[gambler.User.KfId].FloorNugs}");
+        }
     }
     
     public async Task ProcessDrugUse(GamblerDbModel gambler, decimal amount, int drug)
@@ -361,13 +368,23 @@ public class KasinoShop
         
     }
     
-    
-    
-    public async Task ProcessWager(GamblerDbModel gambler, WagerGame game, decimal amount)
+    public async Task ProcessWagerTracking(GamblerDbModel gambler, WagerGame game, decimal amount, decimal net)
     {
-        
+        Gambler_Profiles[gambler.User.KfId].Tracker.AddWager(game, amount, net);
+        await SaveProfiles();
     }
+    
+    public async Task ProcessJuicerOrRainTracking(GamblerDbModel sender, List<GamblerDbModel> recievers, decimal amountPerReciever)
+    {
+        Gambler_Profiles[sender.User.KfId].Tracker.AddWithdrawal(amountPerReciever * recievers.Count);
+        foreach (var reciever in recievers)
+        {
+            if (Gambler_Profiles.ContainsKey(reciever.User.KfId)) Gambler_Profiles[reciever.User.KfId].Tracker.AddDeposit(amountPerReciever);
+        }
 
+        await SaveProfiles();
+    }
+    
     public async Task ProcessStake(GamblerDbModel gambler, decimal amount)
     {
         //check if they have enough crypto for the stake
@@ -460,6 +477,25 @@ public class KasinoShop
         
     }
 
+    public async Task UpdateGambler(GamblerDbModel gambler)
+    {
+        //if someone abandons their gambler profile they can do !shop update gambler to update their gambler profile
+        Gambler_Profiles[gambler.User.KfId].GamblerId = gambler.Id;
+        await SaveProfiles();
+    }
+
+    public async Task UpdateProfileId(GamblerDbModel gambler)
+    {
+        //if someone gets their account fucked with by null, assuming their gambler id stays the same
+        foreach (var key in Gambler_Profiles.Keys)
+        {
+            if (Gambler_Profiles[key].GamblerId == gambler.Id)
+            {
+                Gambler_Profiles[key].ID = gambler.User.KfId;
+            }
+        }
+        await SaveProfiles();
+    }
     public async Task PrintInvestmentMarket(GamblerDbModel gambler)
     {
         await BotInstance.SendChatMessageAsync($"1: Gold - ${GoldBasePriceOz}KKK/oz[br]2: Silver - ${SilverBasePriceOz}KKK/oz[br] 3: House - ${BaseHousePrice} KKK", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
@@ -485,15 +521,15 @@ public class KasinoShop
         
     }
     
-    public async Task CreateProfile(int kf, int gid)
+    public async Task CreateProfile(GamblerDbModel gambler)
     {
-        await BotInstance.SendChatMessageAsync($"Creating profile...", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
-        if (Gambler_Profiles.ContainsKey(kf))
+        await BotInstance.SendChatMessageAsync($"Creating profile for {gambler.User.FormatUsername()}...", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+        if (Gambler_Profiles.ContainsKey(gambler.User.KfId))
         {
             throw new Exception("Attempted to create a new profile for someone who seems to already have a profile?");
         }
-        var profile = new KasinoShopProfile(kf, gid);
-        Gambler_Profiles.Add(kf, profile);
+        var profile = new KasinoShopProfile(gambler);
+        Gambler_Profiles.Add(profile.ID, profile);
         await SaveProfiles();
         
         
@@ -523,6 +559,7 @@ public class KasinoShop
     {
         public int ID { get; set; }
         public int GamblerId { get; set; }
+        public string name;
         private decimal CryptoBalance;
         public decimal OutstandingLoanBalance;
         public Dictionary<int, Asset> Assets;
@@ -546,8 +583,10 @@ public class KasinoShop
         public int KreditScore;
         public StatTracker Tracker;
         
-        public KasinoShopProfile(int kfid, int gid)
+        public KasinoShopProfile(GamblerDbModel gambler)
         {
+            int gid = gambler.Id;
+            int kfid  = gambler.User.KfId;
             ID = kfid;
             GamblerId = gid;
             Assets = new();
@@ -560,6 +599,7 @@ public class KasinoShop
             IsLoanable = false;
             KreditScore = 100;
             Tracker = new StatTracker(gid, kfid);
+            name = gambler.User.FormatUsername();
         }
 
         public async void Beg(UserDbModel user)
@@ -765,7 +805,6 @@ public class KasinoShop
     public abstract class Asset
     {
         public decimal originalValue;
-        private decimal _currentValue;
         public string name;
         public AssetType type;
         public DateTime acquired;
@@ -930,6 +969,11 @@ public class KasinoShop
         {
             return originalValue;
         }
+
+        public override string ToString()
+        {
+            
+        }
     }
 
     
@@ -1031,6 +1075,8 @@ public class KasinoShop
     public static readonly decimal[] ShoeAprRange = { -0.05m, 0.05m };
     public static readonly decimal[] CsSkinAprRange = { -0.25m, 0.25m };
     public static decimal HomeApr = 0.1m;
+    
+    
     
     public static readonly Dictionary<Cars, Car> DefaultCars = new()
     {
@@ -1285,7 +1331,12 @@ public class KasinoShop
 
 
 
-
+public enum SmashableType
+{
+    Headphones,
+    Keyboard,
+    Mouse
+}
 public enum InvestmentType
 {
     Shoes,
