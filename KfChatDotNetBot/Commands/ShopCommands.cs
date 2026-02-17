@@ -12,7 +12,9 @@ public class ShopHelpCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
-        new Regex(@"^shop help$", RegexOptions.IgnoreCase)
+        new Regex(@"^shop help$", RegexOptions.IgnoreCase),
+        new Regex(@"^help shop$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop$", RegexOptions.IgnoreCase)
     ];
     public string? HelpText => "!beg to beg for a loan";
     public UserRight RequiredRight => UserRight.Loser;
@@ -38,15 +40,18 @@ public class ShopHelpCommand : ICommand
             return;
         }
         await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
-        
+
+        await botInstance.SendChatMessageAsync(
+            $"{user.FormatUsername()} - Kasino Shop Help Tool: {KasinoShopHelpLink}", true, autoDeleteAfter: TimeSpan.FromSeconds(15));
         //just gonna link to an html hosted on iddos
     }
 }
 
-public class ListCommand : ICommand
+public class ShopListCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
+        new Regex(@"^my (?<choice>loans|assets|investments|rtp)$", RegexOptions.IgnoreCase),
         new Regex(@"^list (?<choice>loans|assets|investments|rtp)$", RegexOptions.IgnoreCase)
     ];
     public string? HelpText => "!beg to beg for a loan";
@@ -58,7 +63,7 @@ public class ListCommand : ICommand
         Window = TimeSpan.FromSeconds(120)
     };
 
-    private const string KasinoShopHelpLink = "";
+    
     public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments, CancellationToken ctx)
     {
         var cleanupDelay = TimeSpan.FromSeconds(10);
@@ -86,8 +91,10 @@ public class ListCommand : ICommand
                 await botInstance.BotServices.KasinoShop.PrintLoansList(gambler);
                 break;
             case "assets":
+                await botInstance.BotServices.KasinoShop.PrintAssets(gambler);
                 break;
             case "investments":
+                await botInstance.BotServices.KasinoShop.PrintInvestments(gambler);
                 break;
             case "rtp":
                 await botInstance.BotServices.KasinoShop.PrintRtp(gambler);
@@ -256,7 +263,7 @@ public class ShopAssetsCommand : ICommand
         }
         await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
         
-        
+        //asset market code here
     }
 }
 
@@ -264,7 +271,6 @@ public class ShopInvestmentsCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
-        new Regex(@"^investments$", RegexOptions.IgnoreCase),
         new Regex(@"^buy investments (?<num>\d+) (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
         new Regex(@"^buy investments (?<num>\d+)$", RegexOptions.IgnoreCase),
         new Regex(@"^buy investments$", RegexOptions.IgnoreCase),
@@ -299,7 +305,9 @@ public class ShopInvestmentsCommand : ICommand
 
         if (!arguments.TryGetValue("num", out var num))
         {
-            await botInstance.BotServices.KasinoShop.PrintInvestmentMarket(gambler);
+            await botInstance.SendChatMessageAsync($"1: Gold - ${KasinoShop.GoldBasePriceOz}KKK/oz[br]" +
+                                                   $"2: Silver - ${KasinoShop.SilverBasePriceOz}KKK/oz[br]" +
+                                                   $"3: House - ${KasinoShop.BaseHousePrice} KKK", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
             return;
         }
         int item = Convert.ToInt32(num.Value);
@@ -369,8 +377,11 @@ public class ShopDrugsCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
+        new Regex(@"^smoke (?<choice>crack|weed|nugs|rtp)$"),
         new Regex(@"^shop drugs (?<num>\d+)$", RegexOptions.IgnoreCase),
-        new Regex(@"^shop drugs$", RegexOptions.IgnoreCase)
+        new Regex(@"^buy drugs (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop drugs$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy drugs$", RegexOptions.IgnoreCase)
     ];
     public string? HelpText => "!shop to get a list of shop commands";
     public UserRight RequiredRight => UserRight.Loser;
@@ -388,13 +399,89 @@ public class ShopDrugsCommand : ICommand
     }
 }
 
+public class ShopCarCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^buy car (?<choice>civic|type r|type-r|bentley|BMW|Audi)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop car (?<choice>civic|type r|type-r|bentley|BMW|Audi)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop car (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy car (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop car$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy car$", RegexOptions.IgnoreCase)
+    ];
+    public string? HelpText => "!shop to get a list of shop commands";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    { //civic audi bentley bmw
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+        int car;
+        if (arguments.TryGetValue("num", out var num))
+        {
+            car = Convert.ToInt32(num.Value);
+            if (car < 1 || car > 4)
+            {
+                await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid car choice, must pick 1, 2, 3, or 4 (civic, audi, bentley, bmw)", true, autoDeleteAfter: cleanupDelay);
+                return;
+            }
+            await botInstance.BotServices.KasinoShop.ProcessCarPurchase(gambler, car);
+        }
+        else if (arguments.TryGetValue("choice", out var choice))
+        {
+            string carChoice = choice.Value.ToLower();
+            if (carChoice == "bmw") car = 4;
+            else if (carChoice == "audi") car = 3;
+            else if (carChoice == "bentley") car = 2;
+            else if (carChoice == "civic" || carChoice.Contains("r")) car = 1;
+            else
+            {
+                await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid car choice, must pick 1, 2, 3, or 4 (civic, audi, bentley, bmw)", true, autoDeleteAfter: cleanupDelay);
+                return;
+            }
+            await botInstance.BotServices.KasinoShop.ProcessCarPurchase(gambler, car);
+        }
+        else
+        {
+            string str = "";
+            for (int i = 1; i <= KasinoShop.DefaultCars.Count; i++)
+            {
+                str += $"{i}: {KasinoShop.DefaultCars.ElementAt(i - 1).Value}[br]";
+            }
+            await botInstance.SendChatMessageAsync(str, true, autoDeleteAfter: cleanupDelay);
+        }
+    }
+}
+
 
 public class ShopDepositCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
+        new Regex(@"^shop deposit (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop depo (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
         new Regex(@"^deposit (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
         new Regex(@"^depo (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop deposit$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop depo$", RegexOptions.IgnoreCase),
         new Regex(@"^deposit$", RegexOptions.IgnoreCase),
         new Regex(@"^depo$", RegexOptions.IgnoreCase)
     ];
@@ -431,7 +518,45 @@ public class ShopDepositCommand : ICommand
     }
 }
 
-public class ShopWtihdrawCommand : ICommand
+public class ShopCarJobCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^shop job$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop work$", RegexOptions.IgnoreCase),
+        new Regex(@"^work$", RegexOptions.IgnoreCase),
+        new Regex(@"^job$", RegexOptions.IgnoreCase)
+    ];
+    public string? HelpText => "work a job if you have a car";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop.ProcessWorkJob(gambler);
+    }
+}
+
+public class ShopWithdrawCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
@@ -464,6 +589,11 @@ public class ShopWtihdrawCommand : ICommand
         await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
         if (!arguments.TryGetValue("amount", out var amount))
         {
+            string wagerLock = "";
+            if (!botInstance.BotServices.KasinoShop.CheckWagerReq(gambler))
+            {
+                wagerLock += $", and you need to finish your wager requirement before you can withdraw. {";
+            }
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, you can withdraw from your kasino balance of {await gambler.Balance.FormatKasinoCurrencyAsync()}. You must withdraw a minimum of {await 5000m.FormatKasinoCurrencyAsync()}.",
                 true, autoDeleteAfter: cleanupDelay);
@@ -478,13 +608,15 @@ public class ShopWtihdrawCommand : ICommand
     }
 }
 
+
+
 public static class GlobalShopFunctions
 {
     public static async Task CheckProfile(ChatBot botInstance, UserDbModel user, GamblerDbModel gambler) //checks if the user trying to run the command has a profile. if they do not, creates a profile for them
     {
         if (!botInstance.BotServices.KasinoShop!.Gambler_Profiles.ContainsKey(user.KfId))
         {
-            await botInstance.BotServices.KasinoShop.CreateProfile(user.KfId, gambler.Id);
+            await botInstance.BotServices.KasinoShop.CreateProfile(gambler);
             await botInstance.SendChatMessageAsync($"Created kasino shop profile for {user.FormatUsername()}({user.KfId})", true);
         }
         
