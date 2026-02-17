@@ -123,6 +123,18 @@ public class KasinoShop
             drugs.Add($"3. Floor Nugs: {Gambler_Profiles[gambler.User.KfId].FloorNugs}");
         }
     }
+
+    public bool CheckWagerReq(GamblerDbModel gambler)
+    {
+        if (Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[0] >
+            Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[1]) return false;
+        return true;
+    }
+
+    public decimal CheckRemainingWagerReq(GamblerDbModel gambler)
+    {
+        return Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[0] - Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[1];
+    }
     
     public async Task ProcessDrugUse(GamblerDbModel gambler, decimal amount, int drug)
     {
@@ -365,12 +377,54 @@ public class KasinoShop
 
     public async Task ProcessCarPurchase(GamblerDbModel gambler, int carId)
     {
-        
+        //civic audi bentley bmw
+        foreach (var asset in Gambler_Profiles[gambler.User.KfId].Assets.Values)
+        {
+            if (asset is Car c)
+            {
+                await BotInstance.SendChatMessageAsync(
+                    $"{gambler.User.FormatUsername()}, you can't buy a car you already have one: {c}.", true,
+                    autoDeleteAfter: TimeSpan.FromSeconds(10));
+                return;
+            }
+        }
+        var car = DefaultCars.ElementAt(carId).Value;
+        await car.SetId(gambler);
+        Gambler_Profiles[gambler.User.KfId].Assets.Add(car.Id, car);
+        await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you bought {car}", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+        await SaveProfiles();
     }
-    
-    public async Task ProcessWagerTracking(GamblerDbModel gambler, WagerGame game, decimal amount, decimal net)
+
+    public async Task ProcessWorkJob(GamblerDbModel gambler)
+    {
+        bool hasCar = false;
+        int carId = -1;
+        foreach (var assetKey in Gambler_Profiles[gambler.User.KfId].Assets.Keys)
+        {
+            if (Gambler_Profiles[gambler.User.KfId].Assets[assetKey] is Car car)
+            {
+                carId = assetKey;
+                hasCar = true;
+                break;
+            }
+        }
+
+        if (!hasCar)
+        {
+            await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you don't have a car to get a job with.", true, autoDeleteAfter:TimeSpan.FromSeconds(10));
+            return;
+        }
+
+        await ((Car)(Gambler_Profiles[gambler.User.KfId].Assets[carId])).ProcessWorkJob(gambler);
+        await SaveProfiles();
+    }
+    public async Task ProcessWagerTracking(GamblerDbModel gambler, WagerGame game, decimal amount, decimal net, decimal newBalance)
     {
         Gambler_Profiles[gambler.User.KfId].Tracker.AddWager(game, amount, net);
+        if (newBalance < 1 && Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[0] > 0) //if you ran out of money after that gamble reset your wager lock
+        {
+            Gambler_Profiles[gambler.User.KfId].SponsorWagerLock = new decimal[] { 0, 0 };
+        }
         await SaveProfiles();
     }
     
@@ -496,10 +550,6 @@ public class KasinoShop
         }
         await SaveProfiles();
     }
-    public async Task PrintInvestmentMarket(GamblerDbModel gambler)
-    {
-        await BotInstance.SendChatMessageAsync($"1: Gold - ${GoldBasePriceOz}KKK/oz[br]2: Silver - ${SilverBasePriceOz}KKK/oz[br] 3: House - ${BaseHousePrice} KKK", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
-    }
 
 
     public async Task PrintRtp(GamblerDbModel gambler)
@@ -510,15 +560,35 @@ public class KasinoShop
 
     public async Task PrintAssets(GamblerDbModel gambler)
     {
+        string str = $"{gambler.User.FormatUsername()}'s assets:[br]";
+        int counter = 1;
+        bool hasAssets = false;
         foreach (var asset in Gambler_Profiles[gambler.User.KfId].Assets.Values)
         {
-            
+            str += $"{counter}: {asset}[br]";
+            counter++;
+            hasAssets = true;
         }
+        if (!hasAssets) str = $"{gambler.User.FormatUsername()}, you don't have any assets.";
+        await BotInstance.SendChatMessageAsync(str, true, autoDeleteAfter: TimeSpan.FromSeconds(10));
     }
 
     public async Task PrintInvestments(GamblerDbModel gambler)
     {
-        
+        string str = $"{gambler.User.FormatUsername()}'s investments:[br]";
+        int counter = 1;
+        bool hasInvestments = false;
+        foreach (var asset in Gambler_Profiles[gambler.User.KfId].Assets.Values)
+        {
+            if (asset is Investment i)
+            {
+                str += $"{counter}: {i}[br]";
+                counter++;
+                hasInvestments = true;
+            }
+        }
+        if (!hasInvestments) str = $"{gambler.User.FormatUsername()}, you don't have any investments.";
+        await BotInstance.SendChatMessageAsync(str, true, autoDeleteAfter: TimeSpan.FromSeconds(10));
     }
     
     public async Task CreateProfile(GamblerDbModel gambler)
@@ -1031,15 +1101,20 @@ public class KasinoShop
             decimal oldVal = _currentValue;
             _currentValue -= job_value / 5;
             ValueChangeReports.Add(new AssetValueChangeReport(-job_value / 5, (_currentValue - oldVal) / oldVal, DateTime.UtcNow));
+            BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].ModifyBalance(job_value);
             if (_currentValue <= 0) // if your car dies it gets removed from your asset list
             {
                 BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].Assets.Remove(Id);
+                await BotInstance.SendChatMessageAsync(
+                    $"{gambler.User.FormatUsername()} totalled their car on the way home from work.", true,
+                    autoDeleteAfter: TimeSpan.FromSeconds(10));
             }
+            
         }
 
         public override string ToString()
         {
-            return $"{type} {name} worth ${GetCurrentValue()}";
+            return $"{type} {name} worth ${GetCurrentValue()} KKK";
         }
         
     }
