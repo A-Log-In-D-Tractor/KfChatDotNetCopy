@@ -131,7 +131,7 @@ public class KasinoShop
         return true;
     }
 
-    public decimal CheckRemainingWagerReq(GamblerDbModel gambler)
+    public decimal RemainingWagerReq(GamblerDbModel gambler)
     {
         return Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[0] - Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[1];
     }
