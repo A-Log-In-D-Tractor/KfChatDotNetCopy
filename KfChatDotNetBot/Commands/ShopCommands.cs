@@ -377,13 +377,17 @@ public class ShopDrugsCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
-        new Regex(@"^smoke (?<choice>crack|weed|nugs|rtp)$"),
+        new Regex(@"^smoke (?<choice>crack|weed|nugs|floor nugs) (?<amount>\d+(?:\.\d+)?)$"),
+        new Regex(@"^shop drugs (?<num>\d+) (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy drugs (?<num>\d+) (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^smoke (?<choice>crack|weed|nugs|floor nugs) (?<amount>\d+(?:\.\d+)?)$"),
         new Regex(@"^shop drugs (?<num>\d+)$", RegexOptions.IgnoreCase),
         new Regex(@"^buy drugs (?<num>\d+)$", RegexOptions.IgnoreCase),
         new Regex(@"^shop drugs$", RegexOptions.IgnoreCase),
+        new Regex(@"^call derrick$", RegexOptions.IgnoreCase),
         new Regex(@"^buy drugs$", RegexOptions.IgnoreCase)
     ];
-    public string? HelpText => "!shop to get a list of shop commands";
+    public string? HelpText => "buy drugs";
     public UserRight RequiredRight => UserRight.Loser;
     public TimeSpan Timeout => TimeSpan.FromSeconds(30);
     public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
@@ -395,7 +399,68 @@ public class ShopDrugsCommand : ICommand
     public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
         CancellationToken ctx)
     {
-        
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+        int drug;
+        decimal amount;
+        if (arguments.TryGetValue("num", out var num))
+        {
+            
+        }
+        else if (arguments.TryGetValue("choice", out var choice))
+        {
+            string ch = choice.Value.ToLower();
+            if (!arguments.TryGetValue("amount", out var amountArg))
+            {
+                //if they didn't put an amount they must be trying to smoke crack
+                if (ch != "crack")
+                {
+                    await botInstance.SendChatMessageAsync(
+                        $"{user.FormatUsername()}, you must specify how much drug you want to buy. !buy drugs weed 1000 !shop drugs weed 1000 !shop drugs nugs 10",
+                        true, autoDeleteAfter: cleanupDelay);
+                    return;
+                }
+
+                amount = botInstance.BotServices.KasinoShop.GetCurrentCrackPrice(gambler);
+                drug = 1;
+            }
+            else if (ch == "crack")
+            {
+                amount = botInstance.BotServices.KasinoShop.GetCurrentCrackPrice(gambler);
+                drug = 1;
+            }
+            else if (ch == "weed")
+            {
+                amount = Convert.ToDecimal(amountArg.Value);
+                drug = 2;
+            }
+            else //nugs or floor nugs
+            {
+                amount = Convert.ToInt32(amountArg.Value);
+                drug = 3;
+            }
+
+            if (amount < 1)
+            {
+                await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, you have to spend money to buy drugs.", true, autoDeleteAfter: cleanupDelay);
+                return;
+            }
+            await botInstance.BotServices.KasinoShop.ProcessDrugUse(gambler, amount, drug);
+        }
+        else
+        {
+            await botInstance.BotServices.KasinoShop.PrintDrugMarket(gambler);
+        }
     }
 }
 
@@ -522,6 +587,7 @@ public class ShopCarJobCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
+        new Regex(@"^work job$", RegexOptions.IgnoreCase),
         new Regex(@"^shop job$", RegexOptions.IgnoreCase),
         new Regex(@"^shop work$", RegexOptions.IgnoreCase),
         new Regex(@"^work$", RegexOptions.IgnoreCase),
