@@ -112,6 +112,11 @@ public class KasinoShop
         }
     }
 
+    public decimal GetCurrentCrackPrice(GamblerDbModel gambler)
+    {
+        return CrackPrice * Gambler_Profiles[gambler.User.KfId].CrackCounter;
+    }
+    
     public async Task PrintDrugMarket(GamblerDbModel gambler)
     {
         int cc = Gambler_Profiles[gambler.User.KfId].CrackCounter;
@@ -138,7 +143,44 @@ public class KasinoShop
     
     public async Task ProcessDrugUse(GamblerDbModel gambler, decimal amount, int drug)
     {
-        
+        Dictionary<int, string> drugs = new()
+        {
+            {1, "Crack"},
+            {2, "Weed"},
+            {3, "Floor Nugs"}
+        };
+        if (drug != 3)
+        {
+            if (Gambler_Profiles[gambler.User.KfId].Balance()[0] < amount)
+            {
+                await BotInstance.SendChatMessageAsync(
+                    $"{gambler.User.FormatUsername()}, you can't afford to buy {await amount.FormatKasinoCurrencyAsync()} worth of {drugs[drug]}. {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                return;
+            }
+        }
+        else
+        {
+            if (Gambler_Profiles[gambler.User.KfId].FloorNugs < amount)
+            {
+                await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you only have {Gambler_Profiles[gambler.User.KfId].FloorNugs} floor nugs, so that's all you could smoke right now.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                amount = Gambler_Profiles[gambler.User.KfId].FloorNugs;
+            }
+        }
+
+        if (drug == 1)
+        {
+            _ = Gambler_Profiles[gambler.User.KfId].SmokeCrack();
+        }
+        else if (drug == 2)
+        {
+            TimeSpan weedDuration = TimeSpan.FromHours((double)(amount / WeedPricePerHour));
+            _ = Gambler_Profiles[gambler.User.KfId].SmokeWeed(weedDuration);
+        }
+        else
+        {
+            TimeSpan dur = TimeSpan.FromMinutes(6 * (int)amount);
+            _ = Gambler_Profiles[gambler.User.KfId].SmokeWeed(dur);
+        }
     }
 
     public async Task<bool> ProcessLoan(int receiverKfId, decimal amount, GamblerDbModel gUser, int senderGamblerId)
