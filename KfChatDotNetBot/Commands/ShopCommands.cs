@@ -8,6 +8,65 @@ using KfChatDotNetWsClient.Models.Events;
 
 namespace KfChatDotNetBot.Commands.Kasino;
 
+public class ShopGlobalResetCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^admin shop global reset", RegexOptions.IgnoreCase)
+    ];
+    public string? HelpText => "!beg to beg for a loan";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 1,
+        Window = TimeSpan.FromSeconds(120)
+    };
+
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+
+        await botInstance.BotServices.KasinoShop.ResetProfiles();
+    }
+}
+public class ShopGlobalLoanResetCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^admin shop global loan reset", RegexOptions.IgnoreCase)
+    ];
+    public string? HelpText => "!beg to beg for a loan";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 1,
+        Window = TimeSpan.FromSeconds(120)
+    };
+
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+
+        await botInstance.BotServices.KasinoShop.ResetAllLoans();
+    }
+}
+
 public class ShopHelpCommand : ICommand
 {
     public List<Regex> Patterns =>
@@ -629,7 +688,7 @@ public class ShopWithdrawCommand : ICommand
         new Regex(@"^withdraw (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
         new Regex(@"^withdraw$", RegexOptions.IgnoreCase)
     ];
-    public string? HelpText => "!shop to get a list of shop commands";
+    public string? HelpText => "withdraw from kasino to shop";
     public UserRight RequiredRight => UserRight.Loser;
     public TimeSpan Timeout => TimeSpan.FromSeconds(30);
     public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
@@ -671,7 +730,7 @@ public class ShopWithdrawCommand : ICommand
         {
             await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, you must withdraw a minimum of {await 5000m.FormatKasinoCurrencyAsync()}.", true, autoDeleteAfter: cleanupDelay);
         }
-        await botInstance.BotServices.KasinoShop.ProcessDeposit(gambler, withdraw);
+        await botInstance.BotServices.KasinoShop.ProcessWithdraw(gambler, withdraw);
     }
 }
 
