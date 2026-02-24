@@ -32,10 +32,7 @@ public class KasinoShop
     {
         BotInstance = kfChatBot;
         LoadProfiles();
-        foreach (var userId in Gambler_Profiles.Keys)
-        {
-            User_Tokens.Add(userId, new CancellationTokenSource());
-        }
+        
     }
 
     public async void LoadProfiles()
@@ -202,7 +199,7 @@ public class KasinoShop
         //check if the loaner has enough crypto to send loan
         if (Gambler_Profiles[sender.KfId].Balance()[1] < amount)
         {
-            await BotInstance.SendChatMessageAsync($"{sender.FormatUsername()}, you don't have enough crypto to loan {targetUser.FormatUsername()}. {amount}. {await Gambler_Profiles[sender.KfId].FormatBalanceAsync()}", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            await BotInstance.SendChatMessageAsync($"{sender.FormatUsername()}, you don't have enough krypto to loan {targetUser.FormatUsername()}. {amount}. {await Gambler_Profiles[sender.KfId].FormatBalanceAsync()}", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
             return false;
         }
         
@@ -322,8 +319,7 @@ public class KasinoShop
     public async Task ProcessBeg(GamblerDbModel gambler)
     {
         var user = gambler.User;
-        Gambler_Profiles[user.KfId].Beg(user);
-        await SaveProfiles();
+        _ = Gambler_Profiles[user.KfId].Beg(user);
     }
 
     public async Task ProcessWithdraw(GamblerDbModel gambler, decimal amount)
@@ -339,7 +335,7 @@ public class KasinoShop
         var newBalance = await Money.ModifyBalanceAsync(gambler.Id, amount, TransactionSourceEventType.Withdraw);
         await SaveProfiles();
         await BotInstance.SendChatMessageAsync(
-            $"{gambler.User.FormatUsername()}, you withdrew {await amount.FormatKasinoCurrencyAsync()} to your crypto balance. Kasino Balance: {await newBalance.FormatKasinoCurrencyAsync()} | {await Gambler_Profiles[kfId].FormatBalanceAsync()}",
+            $"{gambler.User.FormatUsername()}, you withdrew {await amount.FormatKasinoCurrencyAsync()} to your krypto balance. Kasino Balance: {await newBalance.FormatKasinoCurrencyAsync()} | {await Gambler_Profiles[kfId].FormatBalanceAsync()}",
             true, autoDeleteAfter: TimeSpan.FromSeconds(10));
         
     }
@@ -350,7 +346,7 @@ public class KasinoShop
         if (amount > Gambler_Profiles[kfId].Balance()[0])
         {
             await BotInstance.SendChatMessageAsync(
-                $"{gambler.User.FormatUsername()}, you don't have enough crypto to deposit {await amount.FormatKasinoCurrencyAsync()}. {await Gambler_Profiles[kfId].FormatBalanceAsync()}");
+                $"{gambler.User.FormatUsername()}, you don't have enough krypto to deposit {await amount.FormatKasinoCurrencyAsync()}. {await Gambler_Profiles[kfId].FormatBalanceAsync()}");
             return;
         }
         var newBalance = await Money.ModifyBalanceAsync(gambler.Id, amount, TransactionSourceEventType.Deposit);
@@ -377,22 +373,7 @@ public class KasinoShop
             return;
         }
 
-        int id = Money.GetRandomNumber(gambler, 0, 999999999);
-        int counter = 0;
-        for (int i = 0; i < Gambler_Profiles[gambler.User.KfId].Assets.Count; i++)
-        {
-            if (Gambler_Profiles[gambler.User.KfId].Assets.Values.ElementAt(i).Id == id)
-            {
-                id = Money.GetRandomNumber(gambler, 0, 999999999);
-                i = -1;
-                counter++;
-                if (counter > 10000)
-                {
-                    await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, failed to generate new item ID after 10000 attempts", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
-                    throw new Exception("Failed to generate unused item ID after 10000 attempts");
-                }
-            }
-        }
+        int id = GenerateRandomId(gambler);
 
         string str;
         switch (item)
@@ -473,6 +454,14 @@ public class KasinoShop
         {
             Gambler_Profiles[gambler.User.KfId].SponsorWagerLock = new decimal[] { 0, 0 };
         }
+
+        if (Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[0] >
+            Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[1])
+        {
+            Gambler_Profiles[gambler.User.KfId].SponsorWagerLock = new decimal[] { 0, 0 };
+            await BotInstance.SendChatMessageAsync(
+                $"{gambler.User.FormatUsername()}, you have reached the wager requirement for your sponsorship!", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+        }
         await SaveProfiles();
     }
     
@@ -493,34 +482,52 @@ public class KasinoShop
         if (Gambler_Profiles[gambler.User.KfId].Balance()[1] < amount)
         {
             await BotInstance.SendChatMessageAsync(
-                $"{gambler.User.FormatUsername()}, you don't have enough crypto to stake {await amount.FormatKasinoCurrencyAsync()}. {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}",true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                $"{gambler.User.FormatUsername()}, you don't have enough krypto to stake {await amount.FormatKasinoCurrencyAsync()}. {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}",true, autoDeleteAfter: TimeSpan.FromSeconds(10));
             return;
         }
-        int id = Money.GetRandomNumber(gambler, 0, 999999999);
-        int counter = 0;
-        for (int i = 0; i < Gambler_Profiles[gambler.User.KfId].Assets.Count; i++)
-        {
-            if (Gambler_Profiles[gambler.User.KfId].Assets.Values.ElementAt(i).Id == id)
-            {
-                id = Money.GetRandomNumber(gambler, 0, 999999999);
-                i = -1;
-                counter++;
-                if (counter > 10000)
-                {
-                    await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, failed to generate new item ID after 10000 attempts", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
-                    throw new Exception("Failed to generate unused item ID after 10000 attempts");
-                }
-            }
-        }
+
+        int id = GenerateRandomId(gambler);
 
         var stake = new Investment(id, amount, CryptoStakeInterestRange, InvestmentType.Stake, "Stake");
         Gambler_Profiles[gambler.User.KfId].Assets.Add(id, stake);
         Gambler_Profiles[gambler.User.KfId].ModifyBalance(-amount);
         await BotInstance.SendChatMessageAsync(
-            $"{gambler.User.FormatUsername()}, you staked {await amount.FormatKasinoCurrencyAsync()} crypto.[br] {Gambler_Profiles[gambler.User.KfId].Assets[id]} {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}");
+            $"{gambler.User.FormatUsername()}, you staked {await amount.FormatKasinoCurrencyAsync()} krypto.[br] {Gambler_Profiles[gambler.User.KfId].Assets[id]} {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}");
         await SaveProfiles();
     }
 
+    public async Task ProcessSponsorship(GamblerDbModel gambler)
+    {
+        if (Gambler_Profiles[gambler.User.KfId].IsSponsored)
+        {
+            await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you are already sponsored.", true,
+                autoDeleteAfter: TimeSpan.FromSeconds(10));
+            return;
+        }
+        Gambler_Profiles[gambler.User.KfId].IsSponsored = true;
+        await BotInstance.SendChatMessageAsync(
+            $"{gambler.User.FormatUsername()}, you are now sponsored! You can claim your bonus every day with !sponsor bonus", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+        await SaveProfiles();
+    }
+
+    public async Task ProcessSponsorshipEnd(GamblerDbModel gambler)
+    {
+        Gambler_Profiles[gambler.User.KfId].IsSponsored = false;
+        await BotInstance.SendChatMessageAsync(
+            $"{gambler.User.FormatUsername()}, you are no longer sponsored!", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+        await SaveProfiles();
+    }
+
+    public async Task ProcessSponsorBonus(GamblerDbModel gambler)
+    {
+        Gambler_Profiles[gambler.User.KfId].ProcessSponsorBonus(KASINO_SPONSOR_BONUS);
+        Gambler_Profiles[gambler.User.KfId].SponsorWagerLock[1] += KASINO_SPONSOR_BONUS;
+        Gambler_Profiles[gambler.User.KfId].lastSponsorBonus = DateTime.UtcNow;
+        var newBalance = await Money.ModifyBalanceAsync(gambler.Id, KASINO_SPONSOR_BONUS, TransactionSourceEventType.Sponsorship);
+        await BotInstance.SendChatMessageAsync(
+            $"{gambler.User.FormatUsername()}, you claimed your sponsor bonus of {await KASINO_SPONSOR_BONUS.FormatKasinoCurrencyAsync()}. Balance: {await newBalance.FormatKasinoCurrencyAsync()}");
+        await SaveProfiles();
+    }
     public async Task UnStake(GamblerDbModel gambler, decimal amount = -1, int assetId = -1, bool all = false)
     {
         bool noId = assetId == -1;
@@ -714,11 +721,7 @@ public class KasinoShop
             $"{gambler.User.FormatUsername()} sold {asset}. {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}");
         await SaveProfiles();
     }
-
-    public async Task PrintShoeMarket(GamblerDbModel gambler)
-    {
-        
-    }
+    
 
     public async Task ProcessSkinPurchase(GamblerDbModel gambler, int num)
     {
@@ -747,13 +750,46 @@ public class KasinoShop
         await BotInstance.SendChatMessageAsync(str, true, autoDeleteAfter: TimeSpan.FromSeconds(15));
     }
 
+
+    public async Task PrintShoeMarket(GamblerDbModel gambler)
+    {
+        string str = "Shoes for sale:[br]";
+        var shoeMarket = Gambler_Profiles[gambler.User.KfId].shMarket;
+        int counter = 1;
+        foreach (var shoe in shoeMarket.GetShoes(gambler))
+        {
+            str += $"{counter}: {shoe}[br]";
+            counter++;
+        }
+        await BotInstance.SendChatMessageAsync(str, true, autoDeleteAfter: TimeSpan.FromSeconds(15));
+    }
+    public async Task ProcessShoePurchase(GamblerDbModel gambler, int num)
+    {
+        //yeezy adidas jordan
+        
+        var shoeMarket = Gambler_Profiles[gambler.User.KfId].shMarket;
+        var shoe = shoeMarket.GetShoes(gambler)[num];
+        
+        if (Gambler_Profiles[gambler.User.KfId].Balance()[1] < shoe.originalValue)
+        {
+            await BotInstance.SendChatMessageAsync(
+                $"{gambler.User.FormatUsername()}, you don't have enough krypto to buy {shoe}.[br] {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}");
+            return;
+        }
+        Gambler_Profiles[gambler.User.KfId].Assets.Add(shoe.Id, shoe);
+        Gambler_Profiles[gambler.User.KfId].ModifyBalance(-shoe.originalValue);
+    }
     public async Task UpdateGambler(GamblerDbModel gambler)
     {
         //if someone abandons their gambler profile they can do !shop update gambler to update their gambler profile
         Gambler_Profiles[gambler.User.KfId].GamblerId = gambler.Id;
         await SaveProfiles();
     }
-
+    
+    
+    /*
+     * STUFF TO IMPLEMENT IF THIS PROBLEM ACTUALLY HAPPENS, CURRENTLY UNIMPLEMENTED----------------------------------------------------------------
+     */
     public async Task UpdateProfileId(GamblerDbModel gambler)
     {
         //if someone gets their account fucked with by null, assuming their gambler id stays the same
@@ -766,7 +802,14 @@ public class KasinoShop
         }
         await SaveProfiles();
     }
-
+    /*
+     * -----------------------------------------------------------------------------------------------------------------------------------------
+     */
+    public async Task ProcessSmash(GamblerDbModel gambler)
+    {
+        await BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].Smash(gambler);
+        await SaveProfiles();
+    }
 
     public async Task PrintRtp(GamblerDbModel gambler)
     {
@@ -820,16 +863,16 @@ public class KasinoShop
         
         
     }
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
+
     
     
     
@@ -856,11 +899,13 @@ public class KasinoShop
         public int FloorNugs = 0;
         public DateTime LastSmokedCrack = DateTime.MinValue;
         public bool IsSponsored;
+        public DateTime lastSponsorBonus = DateTime.MinValue;
         public bool IsWeeded;
         public bool IsCracked;
         public bool IsInWithdrawal;
         public bool IsLoanable;
         public SkinMarket sMarket;
+        public ShoeMarket shMarket;
         private CancellationTokenSource CrackToken = new();
         private CancellationTokenSource WeedToken = new();
         private CancellationTokenSource BegToken = new();
@@ -887,30 +932,40 @@ public class KasinoShop
             Tracker = new StatTracker(gid, kfid);
             name = gambler.User.FormatUsername();
             sMarket = new SkinMarket(gambler);
-            
+            shMarket = new ShoeMarket(gambler);
+
         }
 
-        public async void Beg(UserDbModel user)
+        public async Task Beg(UserDbModel user)
         {
             CancellationToken bToken = BegToken.Token;
             IsLoanable = true;
-            var msg = await BotInstance.SendChatMessageAsync($"{user.FormatUsername()} is begging for a loan. {user.FormatUsername()} can be trused with ${KreditScore} KKK in crypto with a 1.5x return.");
+            var msg = await BotInstance.SendChatMessageAsync($"{user.FormatUsername()}({user.KfId}) is begging for a loan. {user.FormatUsername()} can be trused with ${KreditScore} KKK in krypto with a 1.5x return.");
             int counter = 0;
-            while (!bToken.IsCancellationRequested && counter < 1000000)
+            while (!bToken.IsCancellationRequested && counter < 100)
             {
-                await Task.Delay(TimeSpan.FromSeconds(1000000), bToken);
+                await Task.Delay(TimeSpan.FromSeconds(120), bToken);
                 counter++;
             }
             
-            if (counter == 1000000)
-            {
-                await BotInstance.KfClient.EditMessageAsync(msg.ChatMessageId!.Value,
-                    $"{user.FormatUsername()}, nobody wanted to give you a loan. !beg to continue begging for a loan.");
-                await Task.Delay(TimeSpan.FromSeconds(10));
-                await BotInstance.KfClient.DeleteMessageAsync(msg.ChatMessageId.Value);
-            }
+            
+            await BotInstance.KfClient.EditMessageAsync(msg.ChatMessageId!.Value,
+                $"{user.FormatUsername()}, nobody wanted to give you a loan. !beg to continue begging for a loan.");
+            await Task.Delay(TimeSpan.FromSeconds(10));
+            await BotInstance.KfClient.DeleteMessageAsync(msg.ChatMessageId.Value);
+            
         }
 
+        public bool SponsorBonusDue()
+        {
+            if (DateTime.UtcNow - lastSponsorBonus < TimeSpan.FromDays(1)) return false;
+            return true;
+        }
+
+        public void ProcessSponsorBonus(decimal amount)
+        {
+            Tracker.AddDeposit(amount);
+        }
         public void ModifyBalance(decimal amount)
         {
             CryptoBalance += amount;
@@ -972,7 +1027,7 @@ public class KasinoShop
 
         public async Task SmokeWeed(TimeSpan buffLength)
         {
-            FloorNugs++;
+            if (buffLength > TimeSpan.FromMinutes(12)) FloorNugs++;
             CancellationToken wToken = WeedToken.Token;
             CancellationToken cToken = CrackToken.Token;
             if (IsWeeded)
@@ -994,8 +1049,8 @@ public class KasinoShop
             WeedTimer += buffLength;
             for (int i = 0; i < buffLength.Seconds / 5; i++)
             {
-                await Task.Delay(TimeSpan.FromSeconds(5));
-                WeedTimer -= TimeSpan.FromSeconds(5);
+                await Task.Delay(TimeSpan.FromSeconds(1));
+                WeedTimer -= TimeSpan.FromSeconds(1);
                 if (wToken.IsCancellationRequested) return;
                 if (cToken.IsCancellationRequested) return;
                 
@@ -1005,16 +1060,44 @@ public class KasinoShop
             IsWeeded = false;
 
         }
-        
 
+        public async Task<bool> Smash(GamblerDbModel gambler)
+        {
+            List<int> smashableAssetIds = new();
+            bool smashableAssets = false;
+            foreach (var key in Assets.Keys)
+            {
+                if (Assets[key] is Smashable smash)
+                {
+                    smashableAssetIds.Add(key);
+                    smashableAssets = true;
+                }
+            }
+            if (!smashableAssets) return false;
+            foreach (var id in smashableAssetIds)
+            {
+                ((Smashable)Assets[id]).Smash();
+                await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you smashed {Assets[id]}.");
+                if (Assets[id].GetCurrentValue() == 0)
+                {
+                    Assets.Remove(id);
+                    await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, {Assets[id]} is worthless now so you throw it away.");
+                }
+                if (Money.GetRandomNumber(gambler, 0, 100) < 50) break;
+            }
+
+            return true;
+        }
         public void Withdraw(decimal amount)
         {
             CryptoBalance += amount;
+            Tracker.AddWithdrawal(amount);
         }
 
         public void Deposit(decimal amount)
         {
             CryptoBalance -= amount;
+            Tracker.AddDeposit(amount);
         }
         
         
@@ -1053,6 +1136,7 @@ public class KasinoShop
 
             public void AddWager(WagerGame game, decimal amount, decimal net)
             {
+                if (!totalWageredByGame.ContainsKey(game)) AddNewGameToTracker(game);
                 totalWageredByGame[game][0] += amount;
                 totalWageredByGame[game][1] += net;
             }
@@ -1232,6 +1316,15 @@ public class KasinoShop
         }
     }
 
+    public class Shoe : Investment
+    {
+        public ShoeBrand brand;
+        public Shoe(int id, decimal value, ShoeBrand brand) : base(id, value, ShoeAprRange, InvestmentType.Shoes, $"{brand} shoes")
+        {
+            this.brand = brand;
+        }
+    }
+
     public class Skin : Investment
     {
         private decimal _currentValue;
@@ -1253,28 +1346,42 @@ public class KasinoShop
         
         public override string ToString()
         {
-            return $"{name}(ID: {Id}) {ValueChangeReports[^1]}";
+            return $"{name} (ID: {Id}) worth ${GetCurrentValue()} KKK | {ValueChangeReports[^1]}";
         }
     }
 
     public class Smashable : Asset // computer equipment
     {
+        public bool isSmashed = false;
+        public decimal currentValue;
         
-        public new AssetType type = AssetType.Smashable;
-
-        public Smashable()
+        public Smashable(int id, decimal value, string name)
         {
-            
+            Id = id;
+            originalValue = value;
+            currentValue = value;
+            type = AssetType.Smashable;
+            this.name = name;
+            acquired = DateTime.UtcNow;
+            ValueChangeReports = new();
         }
 
         public override decimal GetCurrentValue()
         {
-            return originalValue;
+            return currentValue;
         }
-
+        
+        public void Smash()
+        {
+            isSmashed = true;
+            currentValue -= originalValue / 2;
+            name = $"Smashed {name}";
+            ValueChangeReports.Add(new AssetValueChangeReport(-originalValue/2, -.5m, DateTime.UtcNow));
+        }
+        
         public override string ToString()
         {
-            
+            return $"{name}(ID: {Id}) worth {currentValue} {ValueChangeReports[^1]}";
         }
     }
 
@@ -1309,24 +1416,7 @@ public class KasinoShop
 
         public void SetId(GamblerDbModel gambler) //sets the id of the car to a unique number when you buy it so you can interact with it later 
         {
-            int id = Money.GetRandomNumber(gambler, 0, 999999999);
-            var profile = BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId];
-            int counter = 0;
-            for (int i = 0;
-                 i < profile.Assets.Count;
-                 i++)
-            {
-                if (profile.Assets.ElementAt(i).Value.Id == id)
-                {
-                    id = Money.GetRandomNumber(gambler, 0, 999999999);
-                    i = -1;
-                    counter++;
-                    if (counter > 10000)
-                    {
-                        throw new Exception("failed to generate unique ID for car after 10000 attempts");
-                    }
-                }
-            }
+            Id = GenerateRandomId(gambler);
         }
 
         public async Task ProcessWorkJob(GamblerDbModel gambler)
@@ -1357,8 +1447,43 @@ public class KasinoShop
     //for example if you have a car, you can take meth queen home with you and buy meth
     //markets get new options every day except drug market which stays the same outside of prices
     
-    
-    
+
+    public class ShoeMarket
+    {
+        private List<Shoe> _shoes = new();
+        private DateTime _opened = DateTime.UtcNow;
+
+        public ShoeMarket(GamblerDbModel gambler)
+        {
+            var shoePrices = KasinoShop.ShoePrices(gambler);
+            foreach (var shoeType in shoePrices.Keys)
+            {
+                _shoes.Add(new Shoe(GenerateRandomId(gambler), shoePrices[shoeType], shoeType));
+            }
+        }
+
+        public bool Old()
+        {
+            if (DateTime.UtcNow - _opened > TimeSpan.FromDays(1)) return true;
+            return false;
+        }
+        
+        public List<Shoe> GetShoes(GamblerDbModel gambler)
+        {
+            if (Old())
+            {
+                var shoePrices = KasinoShop.ShoePrices(gambler);
+                _shoes.Clear();
+                foreach (var shoeType in shoePrices.Keys)
+                {
+                    _shoes.Add(new Shoe(GenerateRandomId(gambler), shoePrices[shoeType], shoeType));
+                }
+            }
+
+            return _shoes;
+        }
+        
+    }
     
     public class SkinMarket
     {
@@ -1413,9 +1538,18 @@ public class KasinoShop
         int tg = Money.GetRandomNumber(gambler, 0, CsSkinTags.Count - 1);
         int emo = Money.GetRandomNumber(gambler, 0, CsSkinEmotes.Count - 1);
         string color = GetRandomColor(gambler);
-        int id = Money.GetRandomNumber(gambler, 0, 999999999);
-        int counter = 0;
+        int id = GenerateRandomId(gambler);
+        decimal val = CsSkinTags.ElementAt(tg).Value + CsSkinEmotes.ElementAt(emo).Value;
+        if (val < CsSkinMinBaseValue) val = CsSkinMinBaseValue;
+        return new Skin(id, val, CsSkinObjects[obj], CsSkinTags.ElementAt(tg).Key, color, CsSkinEmotes.ElementAt(emo).Key);
+    }
+
+
+    public static int GenerateRandomId(GamblerDbModel gambler)
+    {
         var profile = BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId];
+        int counter = 0;
+        int id = Money.GetRandomNumber(gambler, 0, 999999999);
         if (profile.Assets.ContainsKey(id))
         {
             while (profile.Assets.ContainsKey(id))
@@ -1429,12 +1563,8 @@ public class KasinoShop
             }
         }
 
-        decimal val = CsSkinTags.ElementAt(tg).Value + CsSkinEmotes.ElementAt(emo).Value;
-        if (val < CsSkinMinBaseValue) val = CsSkinMinBaseValue;
-        return new Skin(id, val, CsSkinObjects[obj], CsSkinTags.ElementAt(tg).Key, color, CsSkinEmotes.ElementAt(emo).Key);
+        return id;
     }
-    
-    
     
     public static readonly Dictionary<Cars, Car> DefaultCars = new()
     {
@@ -1681,8 +1811,8 @@ public class KasinoShop
         int rand = Money.GetRandomNumber(gambler, 0, SmashCarousel.Count - 1);
         return SmashCarousel[rand];
     }
-        
-    
+
+    public decimal KASINO_SPONSOR_BONUS = 1000;
 }
 
 
@@ -1719,7 +1849,6 @@ public enum ShoeBrand
     Yeezy,
     Adidas,
     Jordan,
-    Nike
 }
 
 public enum Cars
@@ -1730,9 +1859,5 @@ public enum Cars
     Bmw
 }
 
-public enum LiabilityType
-{
-    Loan,
-    Sponsorship
-}
+
 
