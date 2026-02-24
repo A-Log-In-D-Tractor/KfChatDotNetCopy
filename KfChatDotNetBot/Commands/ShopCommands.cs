@@ -111,7 +111,8 @@ public class ShopListCommand : ICommand
     public List<Regex> Patterns =>
     [
         new Regex(@"^my (?<choice>loans|assets|investments|rtp)$", RegexOptions.IgnoreCase),
-        new Regex(@"^list (?<choice>loans|assets|investments|rtp)$", RegexOptions.IgnoreCase)
+        new Regex(@"^list (?<choice>loans|assets|investments|rtp)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop list (?<choice>loans|assets|investments|rtp)$", RegexOptions.IgnoreCase)
     ];
     public string? HelpText => "!beg to beg for a loan";
     public UserRight RequiredRight => UserRight.Loser;
@@ -158,10 +159,52 @@ public class ShopListCommand : ICommand
             case "rtp":
                 await botInstance.BotServices.KasinoShop.PrintRtp(gambler);
                 break;
+            default: await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid choice. !list <loans|assets|investments|rtp>", true, autoDeleteAfter: cleanupDelay); return;
         }
     }
 }
 
+public class ShopSellCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^sell (?<id>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop sell (?<id>\d+)$", RegexOptions.IgnoreCase),
+    ];
+    public string? HelpText => "!beg to beg for a loan";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 1,
+        Window = TimeSpan.FromSeconds(120)
+    };
+
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+        if (!arguments.TryGetValue("id", out var id))
+        {
+            await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, need the item ID of the item you want to sell. !sell <id>", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        int item = Convert.ToInt32(id.Value);
+        await botInstance.BotServices.KasinoShop.ProcessAssetSale(gambler, item);
+    }
+}
 public class BegCommand : ICommand
 {
     public List<Regex> Patterns =>
@@ -199,7 +242,6 @@ public class LoanCommand : ICommand
     public List<Regex> Patterns =>
     [
         new Regex(@"^loan (?<reciever>\d+) (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
-        new Regex(@"^loans (?<action>clear)$", RegexOptions.IgnoreCase),
         new Regex(@"^loan$", RegexOptions.IgnoreCase)
     ];
     public string? HelpText => "!beg to beg for a loan";
@@ -387,6 +429,138 @@ public class ShopInvestmentsCommand : ICommand
     }
 }
 
+public class ShopUpdateGambler : ICommand
+{
+    public List<Regex> Patterns => [new Regex(@"^shop update gambler$", RegexOptions.IgnoreCase)];
+    public string? HelpText => "update profile to new gambler id if you abandon your gambler account";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments, CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+        await botInstance.BotServices.KasinoShop.UpdateGambler(gambler);
+    }
+}
+
+public class ShopShoeCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^shop shoes (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy shoes (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop buy shoes (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop shoes (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy shoes (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop buy shoes (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop shoes$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy shoes$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop buy shoes$", RegexOptions.IgnoreCase),
+    ];
+    public string? HelpText => "!shop investments to look at the investments for sale. 1 2 or 3 and an optional amount at the end to buy the investment (default you will buy 1)";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+        
+        if (!arguments.TryGetValue("num", out var num))
+        {
+            await botInstance.BotServices.KasinoShop.PrintShoeMarket(gambler);
+            return;
+        }
+        
+        int shoe = Convert.ToInt32(num.Value);
+        if (shoe < 1 || shoe > 3)
+        {
+            await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid shoe pick, must pick 1, 2, or 3.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        await botInstance.BotServices.KasinoShop.ProcessShoePurchase(gambler, shoe);
+    }
+}
+
+public class ShopSkinCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^shop skin (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy skin (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop buy skin (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop skin$", RegexOptions.IgnoreCase),
+        new Regex(@"^buy skin$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop buy skin$", RegexOptions.IgnoreCase),
+    ];
+    public string? HelpText => "!shop investments to look at the investments for sale. 1 2 or 3 and an optional amount at the end to buy the investment (default you will buy 1)";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        if (!arguments.TryGetValue("num", out var num))
+        {
+            await botInstance.BotServices.KasinoShop.PrintSkinMarket(gambler);
+            return;
+        }
+
+        int skin = Convert.ToInt32(num.Value);
+        
+        await botInstance.BotServices.KasinoShop.ProcessSkinPurchase(gambler, skin);
+        
+    }
+}
 public class ShopStakeCommand : ICommand
 {
     public List<Regex> Patterns =>
@@ -431,7 +605,160 @@ public class ShopStakeCommand : ICommand
     }
 }
 
+public class ShopUnstakeCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^unstake$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop unstake$", RegexOptions.IgnoreCase),
+        new Regex(@"^unstake (?<all>all)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop unstake (?<all>all)$", RegexOptions.IgnoreCase),
+        new Regex(@"^unstake (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop unstake (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^unstake (?<id>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop unstake (?<id>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^unstake (?<id>\d+) (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop unstake (?<id>\d+) (?<amount>\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase),
+    ];
+    public string? HelpText => "!shop investments to look at the investments for sale. 1 2 or 3 and an optional amount at the end to buy the investment (default you will buy 1)";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
 
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        bool containsId = arguments.TryGetValue("id", out var id);
+        bool containsAmount = arguments.TryGetValue("amount", out var amount);
+        bool containsAll = arguments.TryGetValue("all", out var all);
+        decimal amountUnstake = -1;
+        int unstakeId = -1;
+        if (containsId) unstakeId = Convert.ToInt32(id!.Value);
+        if (containsAmount) amountUnstake = Convert.ToDecimal(amount!.Value);
+        if (!containsId && !containsAmount && !containsAll)
+        {
+            await botInstance.SendChatMessageAsync(
+                $"{user.FormatUsername()}, you must specify an id or amount to unstake, or all to unstake everything.", true,
+                autoDeleteAfter: cleanupDelay);
+            return;
+        }
+
+        await botInstance.BotServices.KasinoShop.UnStake(gambler, amountUnstake, unstakeId, containsAll);
+    }
+}
+
+public class SponsorShipCommand : ICommand
+{
+    public List<Regex> Patterns => [new Regex(@"^shop sponsorship$", RegexOptions.IgnoreCase)];
+    public string? HelpText => "buy drugs";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop.ProcessSponsorship(gambler);
+    }
+}
+
+public class SponsorShipBonusCommand : ICommand
+{
+    public List<Regex> Patterns => [new Regex(@"^sponsor bonus$", RegexOptions.IgnoreCase)];
+    public string? HelpText => "buy drugs";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop.ProcessSponsorBonus(gambler);
+    }
+}
+
+public class EndSponsorShipCommand : ICommand
+{
+    public List<Regex> Patterns => [new Regex(@"^shop end sponsorship$", RegexOptions.IgnoreCase)];
+    public string? HelpText => "buy drugs";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop.ProcessSponsorshipEnd(gambler);
+    }
+}
 public class ShopDrugsCommand : ICommand
 {
     public List<Regex> Patterns =>
@@ -474,7 +801,25 @@ public class ShopDrugsCommand : ICommand
         decimal amount;
         if (arguments.TryGetValue("num", out var num))
         {
-            
+            drug = Convert.ToInt32(num.Value);
+            if (drug == 1)
+            {
+                amount = botInstance.BotServices.KasinoShop.GetCurrentCrackPrice(gambler);
+                await botInstance.BotServices.KasinoShop.ProcessDrugUse(gambler, amount, drug);
+            }
+            else
+            {
+                if (!arguments.TryGetValue("amount", out var amountt))
+                {
+                    await botInstance.SendChatMessageAsync(
+                        $"{user.FormatUsername()}, you must specify how much drug you want to buy. !buy drugs weed 1000 !shop drugs weed 1000 !smoke nugs 10",
+                        true, autoDeleteAfter: cleanupDelay);
+                    return;
+                }
+                amount = Convert.ToDecimal(amountt.Value);
+                await botInstance.BotServices.KasinoShop.ProcessDrugUse(gambler, amount, drug);
+                
+            }
         }
         else if (arguments.TryGetValue("choice", out var choice))
         {
@@ -485,7 +830,7 @@ public class ShopDrugsCommand : ICommand
                 if (ch != "crack")
                 {
                     await botInstance.SendChatMessageAsync(
-                        $"{user.FormatUsername()}, you must specify how much drug you want to buy. !buy drugs weed 1000 !shop drugs weed 1000 !shop drugs nugs 10",
+                        $"{user.FormatUsername()}, you must specify how much drug you want to buy. !buy drugs weed 1000 !shop drugs weed 1000 !smoke nugs 10",
                         true, autoDeleteAfter: cleanupDelay);
                     return;
                 }
