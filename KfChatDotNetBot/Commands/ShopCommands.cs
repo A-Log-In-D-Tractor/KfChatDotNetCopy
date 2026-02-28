@@ -84,7 +84,7 @@ public class ShopHelpCommand : ICommand
         Window = TimeSpan.FromSeconds(120)
     };
 
-    private const string KasinoShopHelpLink = "";
+    private const string KasinoShopHelpLink = "https://i.ddos.lgbt/raw/pgTFLJ.html";
     public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments, CancellationToken ctx)
     {
         var cleanupDelay = TimeSpan.FromSeconds(10);
@@ -332,11 +332,15 @@ public class RepaymentCommand : ICommand
 }
 
 
-public class ShopAssetsCommand : ICommand
+public class ShopSmashableCommand : ICommand
 {
     public List<Regex> Patterns =>
     [
+        new Regex(@"^shop buy assets (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop buy smashable (?<num>\d+)$", RegexOptions.IgnoreCase),
         new Regex(@"^shop assets (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop smashable (?<num>\d+)$", RegexOptions.IgnoreCase),
+        new Regex(@"^shop smashable$", RegexOptions.IgnoreCase),
         new Regex(@"^shop assets$", RegexOptions.IgnoreCase)
     ];
     public string? HelpText => "!shop to get a list of shop commands";
@@ -363,8 +367,19 @@ public class ShopAssetsCommand : ICommand
             throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
         }
         await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
-        
-        //asset market code here
+
+        if (!arguments.TryGetValue("num", out var num))
+        {
+            await botInstance.BotServices.KasinoShop.PrintSmashableShop(gambler);
+            return;
+        }
+        int smashable = Convert.ToInt32(num.Value);
+        if (smashable < 1 || smashable > 3)
+        {
+            await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, invalid smashable pick, must pick 1, 2, or 3.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        await botInstance.BotServices.KasinoShop.ProcessSmashablePurchase(gambler, smashable);
     }
 }
 
@@ -1147,12 +1162,6 @@ public class FlipSwitchCommand : ICommand
             await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
             return;
         }
-        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
-        if (gambler == null)
-        {
-            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
-        }
-        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
 
         await botInstance.BotServices.KasinoShop!.ProcessRigging(type);
     }
@@ -1183,12 +1192,6 @@ public class PushButtonCommand : ICommand
             await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
             return;
         }
-        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
-        if (gambler == null)
-        {
-            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
-        }
-        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
 
         await botInstance.BotServices.KasinoShop!.ProcessRigging(type);
     }
@@ -1219,13 +1222,6 @@ public class PullLeverCommand : ICommand
             await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
             return;
         }
-        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
-        if (gambler == null)
-        {
-            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
-        }
-        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
-
         await botInstance.BotServices.KasinoShop!.ProcessRigging(type);
     }
 }
@@ -1255,12 +1251,6 @@ public class DialCommand : ICommand
             await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
             return;
         }
-        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
-        if (gambler == null)
-        {
-            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
-        }
-        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
         if (!arguments.TryGetValue("choice", out var choice)) return;
         bool dialUp = choice.Value.ToLower() == "up";
         await botInstance.BotServices.KasinoShop!.ProcessRigging(type, dial: dialUp);
@@ -1292,12 +1282,6 @@ public class KeypadCommand : ICommand
             await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
             return;
         }
-        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
-        if (gambler == null)
-        {
-            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
-        }
-        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
 
         if (!arguments.TryGetValue("num", out var num)) return;
         var number = Convert.ToDecimal(num.Value);
@@ -1331,13 +1315,7 @@ public class PanelCommand : ICommand
             await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
             return;
         }
-        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
-        if (gambler == null)
-        {
-            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
-        }
-        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
-
+        
         await botInstance.BotServices.KasinoShop!.GetCurrentRiggingState();
     }
 }
