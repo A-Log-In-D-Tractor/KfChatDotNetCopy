@@ -27,6 +27,7 @@ public class KasinoShop
     public static ChatBot BotInstance = null!;
     public int[]? activeLoanIds = null;
     public Dictionary<int, KasinoShopProfile> Gambler_Profiles = new(); //list of all profiles, accesesd via kf user id
+    public decimal DefaultHouseEdgeModifier = 0;
     
     public KasinoShop(ChatBot kfChatBot)
     {
@@ -106,6 +107,137 @@ public class KasinoShop
             }
             //else you already paid the interest part of the loan so nothing to clear
         }
+    }
+
+    public async Task GetCurrentRiggingState()
+    {
+        string str = "";
+        List<decimal> values = new() { 1.02m, -0.9m, 0 };
+        List<decimal> differences = new() {values[0] - DefaultHouseEdgeModifier, values[1] - DefaultHouseEdgeModifier, values[2] - DefaultHouseEdgeModifier };
+        if (DefaultHouseEdgeModifier == 1.02m)
+        {
+            await BotInstance.SendChatMessageAsync("The switch was flipped twice.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            return;
+        }
+        else if (DefaultHouseEdgeModifier == -0.9m)
+        {
+            await BotInstance.SendChatMessageAsync("The switch was flipped once.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            return;
+        }
+        else if (DefaultHouseEdgeModifier == 0)
+        {
+            await BotInstance.SendChatMessageAsync("The button is pressed.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            return;
+        }
+        
+        var currentDHEM = DefaultHouseEdgeModifier;
+        
+        
+        while (currentDHEM != 0)
+        {
+            var ld = LowestDifferenceIndex(differences);
+            if (ld.i == 0)
+            {
+                str += "A switch was flipped twice.[br]";
+                currentDHEM -= values[ld.i];
+            }
+            else if (ld.i == 1)
+            {
+                str += "A switch was flipped once.[br]";
+                currentDHEM -= values[ld.i];
+            }
+            else if (ld.i == 2)
+            {
+                if (ld.d < 0)
+                {
+                    currentDHEM += 0.01m;
+                    str += "A dial was moved down.[br]";
+                }
+                else
+                {
+                    currentDHEM -= 0.01m;
+                    str += "A dial was moved up.[br]";
+                }
+            }
+            differences = new() {values[0] - DefaultHouseEdgeModifier, values[1] - DefaultHouseEdgeModifier, values[2] - DefaultHouseEdgeModifier };
+        }
+        await BotInstance.SendChatMessageAsync(str, true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+
+        (int i, decimal d) LowestDifferenceIndex(List<decimal> diffs)
+        {
+            var lowestDifference = Math.Abs(differences[0]);
+            var lowestDifferenceIndex = 0;
+            if (Math.Abs(diffs[1]) < lowestDifference)
+            {
+                lowestDifference = Math.Abs(differences[1]);
+                lowestDifferenceIndex = 1;
+            }
+
+            if (Math.Abs(diffs[2]) < lowestDifference)
+            {
+                lowestDifference = Math.Abs(differences[2]);
+                lowestDifferenceIndex = 2;
+            }
+            
+            return (lowestDifferenceIndex, lowestDifference);
+        }
+    }
+    public async Task ProcessRigging(Rigging type, decimal num = -1, bool? dial = null)
+    {
+        /*
+         * FLIP SWITCH - variate default house edge modifier to -0.9, then to 1.02 if it's currently -0.9
+         *
+         * PUSH BUTTON - reset house edge modifier to 0
+         *
+         * DIAL UP/DOWN - decrease or increase default house edge modifier by 0.01
+         *
+         * PULL LEVER - does nothing
+         *
+         * KEYPAD <num> - sets the house edge modifier to num
+         */
+        var oldDefault = DefaultHouseEdgeModifier;
+        decimal difference = 0;
+        switch (type)
+        {
+            case Rigging.Lever:
+                await BotInstance.SendChatMessageAsync("A lever was pulled.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                await Task.Delay(TimeSpan.FromMinutes(5));
+                await BotInstance.SendChatMessageAsync("A lever returned to its original position.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                break;
+            case Rigging.Keypad:
+                if (num == -1) throw new Exception("Invalid number passed into keypad");
+                DefaultHouseEdgeModifier = num;
+                difference = DefaultHouseEdgeModifier - oldDefault;
+                await BotInstance.SendChatMessageAsync("Keypad value accepted.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                break;
+            case Rigging.Switch:
+                if (DefaultHouseEdgeModifier != -0.9m)
+                {
+                    DefaultHouseEdgeModifier = -0.9m;
+                }
+                else DefaultHouseEdgeModifier = 1.02m;
+                difference = DefaultHouseEdgeModifier - oldDefault;
+                await BotInstance.SendChatMessageAsync("A switch was flipped.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                break;
+            case Rigging.Button:
+                DefaultHouseEdgeModifier = 0;
+                difference = DefaultHouseEdgeModifier - oldDefault;
+                break;
+            case Rigging.Dial:
+                if (dial == null) throw new Exception("Invalid dial value passed into dial");
+                if (dial.Value)
+                {
+                    DefaultHouseEdgeModifier += 0.01m;
+                }
+                else DefaultHouseEdgeModifier -= 0.01m;
+                difference = DefaultHouseEdgeModifier - oldDefault;
+                break;
+        }
+        foreach (var key in Gambler_Profiles.Keys)
+        {
+            Gambler_Profiles[key].HouseEdgeModifier += difference;
+        }
+        await SaveProfiles();
     }
 
     public decimal GetCurrentCrackPrice(GamblerDbModel gambler)
@@ -808,6 +940,7 @@ public class KasinoShop
     public async Task ProcessSmash(GamblerDbModel gambler)
     {
         await BotInstance.BotServices.KasinoShop!.Gambler_Profiles[gambler.User.KfId].Smash(gambler);
+        
         await SaveProfiles();
     }
 
@@ -982,7 +1115,6 @@ public class KasinoShop
         public async Task SmokeCrack()
         {
             CancellationToken cToken = CrackToken.Token;
-            CancellationToken wToken = WeedToken.Token;
             if (IsCracked || IsInWithdrawal)
             {
                 CrackToken.Cancel();
@@ -1015,13 +1147,13 @@ public class KasinoShop
                 if (cToken.IsCancellationRequested)
                 {
                     //if you smoke crack while in withdraw, get the basic benefits of crack back but do not reset crackcounter
-                    HouseEdgeModifier = 0;
+                    HouseEdgeModifier = BotInstance.BotServices.KasinoShop!.DefaultHouseEdgeModifier;
                     return;
                 }
             }
             //reset the house edge modifier and crack counter after withdrawal has passed
             CrackCounter = 0;
-            HouseEdgeModifier = 0;
+            HouseEdgeModifier = BotInstance.BotServices.KasinoShop!.DefaultHouseEdgeModifier;
             IsInWithdrawal = false;
         }
 
@@ -1061,7 +1193,7 @@ public class KasinoShop
 
         }
 
-        public async Task<bool> Smash(GamblerDbModel gambler)
+        public async Task Smash(GamblerDbModel gambler)
         {
             List<int> smashableAssetIds = new();
             bool smashableAssets = false;
@@ -1073,7 +1205,59 @@ public class KasinoShop
                     smashableAssets = true;
                 }
             }
-            if (!smashableAssets) return false;
+            if (!smashableAssets)
+            {
+                //check if they have any physical assets in their possesion, shoes, gold, silver, house, car, small chance to damage one of those instead
+                List<int> physicalAssetIds = new();
+                foreach (var key in Assets.Keys)
+                {
+                    if (Assets[key] is Investment inv)
+                    {
+                        if (inv.investment_type != InvestmentType.Stake && inv.investment_type != InvestmentType.Skin)
+                        {
+                            physicalAssetIds.Add(key);
+                        }
+                    }
+                    else if (Assets[key] is Shoe shoe)
+                    {
+                        physicalAssetIds.Add(key);
+                    }
+                    else if (Assets[key] is Car car)
+                    {
+                        physicalAssetIds.Add(key);
+                    }
+                }
+
+                int num = Money.GetRandomNumber(gambler, 0, 100);
+                if (physicalAssetIds.Count == 0 || num < 90)
+                {
+                    await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you don't have anything to smash.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                    return;
+                }
+                
+                //now "smash" one of the assets
+                num = Money.GetRandomNumber(gambler, 0, 4);
+                var assetId = smashableAssetIds[num];
+                if (Assets[assetId] is Shoe sh)
+                {
+                    sh.Smash();
+                }
+                else if (Assets[assetId] is Car car)
+                {
+                    car.Smash();
+                }
+                else if (Assets[assetId] is Investment inv)
+                {
+                    inv.Smash();
+                }
+                await BotInstance.SendChatMessageAsync($"{gambler.User.FormatUsername()}, you smashed {Assets[assetId]}.", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+                foreach (var lKey in Loans.Keys)
+                {
+                    Loans[lKey].ProcessSmash(ID, BotInstance);
+                }
+
+                return;
+            }
             foreach (var id in smashableAssetIds)
             {
                 ((Smashable)Assets[id]).Smash();
@@ -1086,7 +1270,10 @@ public class KasinoShop
                 if (Money.GetRandomNumber(gambler, 0, 100) < 50) break;
             }
 
-            return true;
+            foreach (var lKey in Loans.Keys)
+            {
+                Loans[lKey].ProcessSmash(ID, BotInstance);
+            }
         }
         public void Withdraw(decimal amount)
         {
@@ -1249,6 +1436,18 @@ public class KasinoShop
             return $"owes {payableTo}({payableToKf}) ${payoutAmount}KKK";
         }
 
+        public void ProcessSmash(int smasherId, ChatBot instance)
+        {
+            if (smasherId == recieverKf)
+            {
+                if (payoutAmount > amount)
+                {
+                    payoutAmount = amount;
+                    instance.BotServices.KasinoShop!.Gambler_Profiles[payableToKf].Loans[Id].payoutAmount = amount;
+                }
+            }
+        }
+        
         [Obsolete("Don't use base ToString, use await ToStringAsync(int kfId) instead", true)]
         public override string ToString()
         {
@@ -1313,6 +1512,14 @@ public class KasinoShop
             var oldval = _currentValue;
             _currentValue -= amount;
             ValueChangeReports.Add(new AssetValueChangeReport(-amount, -(_currentValue/oldval), DateTime.UtcNow));
+        }
+
+        public void Smash()
+        {
+            if (investment_type == InvestmentType.Stake || investment_type == InvestmentType.Skin) throw new Exception("attempted to smash a stake");
+            var oldval = _currentValue;
+            _currentValue -= originalValue/2;
+            ValueChangeReports.Add(new AssetValueChangeReport(_currentValue - oldval, (_currentValue - oldval) / oldval, DateTime.UtcNow));
         }
     }
 
@@ -1434,7 +1641,14 @@ public class KasinoShop
             }
             
         }
-
+        
+        public void Smash() //car can be damaged as a result of smashing but not destroyed
+        {
+            var oldval = _currentValue;
+            _currentValue -= _currentValue / 4;
+            ValueChangeReports.Add(new AssetValueChangeReport(_currentValue - oldval, (_currentValue - oldval) / oldval, DateTime.UtcNow));
+        }
+        
         public override string ToString()
         {
             return $"{type} {name} worth ${GetCurrentValue()} KKK";
@@ -1857,6 +2071,17 @@ public enum Cars
     Bentley,
     Audi,
     Bmw
+}
+
+public enum Rigging
+{
+    Switch,
+    Button,
+    Lever,
+    Panel,
+    Keypad,
+    Dial,
+    Electromagnet
 }
 
 
