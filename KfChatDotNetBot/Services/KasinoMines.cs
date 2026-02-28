@@ -3,9 +3,11 @@ using KfChatDotNetBot.Extensions;
 using KfChatDotNetBot.Models;
 using KfChatDotNetBot.Models.DbModels;
 using KfChatDotNetBot.Settings;
+using KfChatDotNetBot.Commands;
 using NLog;
 using StackExchange.Redis;
 using System.Text.Json.Serialization;
+using KfChatDotNetBot.Commands.Kasino;
 
 namespace KfChatDotNetBot.Services;
 
@@ -26,7 +28,7 @@ public class KasinoMines
         public int Size { get; set; }
         public int Mines { get; set; }
         public List<(int r, int c)> BetsPlaced;
-        public string? LastMessageId;
+        public int LastMessageId = 0;
         public string LastMessageReference = "";
         
 
@@ -44,12 +46,12 @@ public class KasinoMines
         {
             _logger.Info("Resetting message");
             // 0 is the default for int
-            if (LastMessageId != null)
+            if (LastMessageId != 0)
             {
                 await _kfChatBot.KfClient.DeleteMessageAsync(LastMessageId);
             }
-
-            LastMessageId = msg.ChatMessageUuid ?? throw new InvalidOperationException($"ChatMessageId was null for {msg.Reference}");
+            if (msg.ChatMessageId == null) throw new InvalidOperationException($"ChatMessageId was null for {msg.Reference}");
+            LastMessageId = msg.ChatMessageId.Value;
             LastMessageReference = msg.Reference;
         }
 
@@ -83,7 +85,7 @@ public class KasinoMines
         }
         public async Task Explode((int r, int c) mineLocation, SentMessageTrackerModel msg)
         {
-            if (LastMessageId == null || LastMessageId != msg.ChatMessageUuid)
+            if (LastMessageId == 0 || LastMessageId != msg.ChatMessageId)
             {
                 await ResetMessage(msg);
             }
@@ -150,12 +152,12 @@ public class KasinoMines
                 redWave++;
                 whiteWave++;
                 await Task.Delay(100);
-                await _kfChatBot.KfClient.EditMessageAsync(LastMessageId!, $"{str}[br]{Creator.User.FormatUsername()}");
+                await _kfChatBot.KfClient.EditMessageAsync(LastMessageId, $"{str}[br]{Creator.User.FormatUsername()}");
             }
 
             await Task.Delay(TimeSpan.FromSeconds(10));
-            await _kfChatBot.KfClient.DeleteMessageAsync(msg.ChatMessageUuid!);
-            LastMessageId = null;
+            await _kfChatBot.KfClient.DeleteMessageAsync(msg.ChatMessageId!.Value);
+            LastMessageId = 0;
 
             (int vertical, int horizontal) DistanceFromMine((int r, int c) coord)
             {
@@ -294,12 +296,20 @@ public class KasinoMines
         await _redisDb.StringSetAsync($"Mines.State.{gamblerId}", json, null, When.Always);
     }
 
-    public async Task RemoveGame(int gamblerId)
+    public async Task RemoveGame(GamblerDbModel gambler, decimal net, decimal newBalance)
     {
+        int gamblerId = gambler.Id;
         await GetSavedGames(gamblerId);
         //attempt to delete the message if its there
-        if (ActiveGames[gamblerId].LastMessageId != null) await _kfChatBot.KfClient.DeleteMessageAsync(ActiveGames[gamblerId].LastMessageId!);
-        ActiveGames.Remove(gamblerId);
+        if (ActiveGames[gamblerId].LastMessageId != 0) await _kfChatBot.KfClient.DeleteMessageAsync(ActiveGames[gamblerId].LastMessageId);
+        //KasinoShop stuff -------------------------------------------------------------------------
+        if (_kfChatBot.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(_kfChatBot, gambler.User, gambler);
+            await _kfChatBot.BotServices.KasinoShop.ProcessWagerTracking(gambler, WagerGame.Wheel, ActiveGames[gamblerId].Wager, net, newBalance);
+        }
+        //------------------------------------------------------------------------------------------
+        ActiveGames?.Remove(gamblerId);
         await SaveActiveGames(gamblerId);
     }
 
@@ -330,22 +340,23 @@ public class KasinoMines
                 
             }
         }
-        await _kfChatBot.KfClient.EditMessageAsync(game.LastMessageId!, str);
+        await _kfChatBot.KfClient.EditMessageAsync(game.LastMessageId, str);
         var net = payout - game.Wager;
         var newBalance = await Money.NewWagerAsync(game.Creator.Id, game.Wager, net, WagerGame.Mines);
         
         await _kfChatBot.SendChatMessageAsync(
             $"{game.Creator.User.FormatUsername()}, you won {await payout.FormatKasinoCurrencyAsync()} from your {await game.Wager.FormatKasinoCurrencyAsync()} bet on mines, collecting {game.BetsPlaced.Count} gems while avoiding {game.Mines} mines. Net: {await net.FormatKasinoCurrencyAsync()}. Balance: {await newBalance.FormatKasinoCurrencyAsync()}", true, autoDeleteAfter: TimeSpan.FromSeconds(15));
         await Task.Delay(TimeSpan.FromSeconds(15));
-        await RemoveGame(game.Creator.Id);
+        await RemoveGame(game.Creator, net, newBalance);
     }
         
-    public async Task<bool> Bet(int gamblerId, int count, SentMessageTrackerModel msg, bool cashOut) //returns false if you hit a bomb, true if you didn't
+    public async Task<bool> Bet(GamblerDbModel gambler, int count, SentMessageTrackerModel msg, bool cashOut) //returns false if you hit a bomb, true if you didn't
     {
+        int gamblerId = gambler.Id;
         await GetSavedGames(gamblerId);
         var game = ActiveGames[gamblerId];
         game.LastInteracted = DateTimeOffset.UtcNow;
-        if (game.LastMessageId == null || game.LastMessageId != msg.ChatMessageUuid)
+        if (game.LastMessageId == 0 || game.LastMessageId != msg.ChatMessageId)
         {
             
             await game.ResetMessage(msg);
@@ -396,16 +407,25 @@ public class KasinoMines
             validBets.RemoveAt(rand);
         }
 
-        return await Bet(gamblerId, betCoords, msg, cashOut, true);
+        return await Bet(gambler, betCoords, msg, cashOut, true);
     }
 
-    public async Task<bool> Bet(int gamblerId, List<(int r, int c)> coords, SentMessageTrackerModel msg, bool cashOut, bool calledFromBet = false)
+    public async Task<bool> Bet(GamblerDbModel gambler, List<(int r, int c)> coords, SentMessageTrackerModel msg, bool cashOut, bool calledFromBet = false)
     {
-        
+        int gamblerId = gambler.Id;
+        var user = gambler.User;
+        //KasinoShop stuff -------------------------------------------------------------------------
+        if (_kfChatBot.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(_kfChatBot, user, gambler);
+            HOUSE_EDGE += _kfChatBot.BotServices.KasinoShop.Gambler_Profiles[user.KfId].HouseEdgeModifier;
+        }
+        //------------------------------------------------------------------------------------------
+
         await GetSavedGames(gamblerId);
         var game = ActiveGames[gamblerId];
         game.LastInteracted = DateTimeOffset.UtcNow;
-        if (game.LastMessageId == null || game.LastMessageId != msg.ChatMessageUuid)
+        if (game.LastMessageId == 0 || game.LastMessageId != msg.ChatMessageId)
         {
             await game.ResetMessage(msg);
         }
@@ -435,7 +455,7 @@ public class KasinoMines
             {
                 if (!validBets.Contains(bet) || game.BetsPlaced.Contains(bet) || bets.Contains(bet))
                 {
-                    await _kfChatBot.KfClient.EditMessageAsync(invalidBetMsg.ChatMessageUuid!,
+                    await _kfChatBot.KfClient.EditMessageAsync(invalidBetMsg.ChatMessageId!.Value,
                         $"{game.Creator.User.FormatUsername()}, invalid bet of {bet.r},{bet.c} removed (already placed, duplicate, or invalid coordinate)");
                     await Task.Delay(5);
                 }
@@ -446,61 +466,61 @@ public class KasinoMines
             if (bets.Count > numGems)
             {
 
-                await _kfChatBot.KfClient.EditMessageAsync(invalidBetMsg.ChatMessageUuid!,
+                await _kfChatBot.KfClient.EditMessageAsync(invalidBetMsg.ChatMessageId!.Value,
                     $"{game.Creator.User.FormatUsername()}, you bet on {bets.Count} gems, but there are only {numGems} left. Your list of bets was automatically truncated, and the game will automatically cash out if you win.");
                 bets.RemoveRange(numGems, bets.Count - numGems);
                 cashOut = true;
             }
             else if (bets.Count == numGems)
             {
-                await _kfChatBot.KfClient.EditMessageAsync(invalidBetMsg.ChatMessageUuid!,
+                await _kfChatBot.KfClient.EditMessageAsync(invalidBetMsg.ChatMessageId!.Value,
                     $"{game.Creator.User.FormatUsername()}, you bet on all gems, so you will automatically cash out if you win.");
                 cashOut = true;
             }
 
             await Task.Delay(50);
-            _ = _kfChatBot.KfClient.DeleteMessageAsync(invalidBetMsg.ChatMessageUuid!);
+            _ = _kfChatBot.KfClient.DeleteMessageAsync(invalidBetMsg.ChatMessageId!.Value);
 
         }
         else bets = coords;
         foreach (var coord in bets) //the main portion of the game
         {
-            await Task.Delay(100);
+            await Task.Delay(150);
             if (game.MinesBoard[coord.r][ coord.c] == 'M')
             {
                 game.BetsPlaced.Add(coord);
-                await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid!, game.ToString());
+                await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageId!.Value, game.ToString());
                 _ = game.Explode((coord.r, coord.c), msg);
                 var newBalance = await Money.NewWagerAsync(game.Creator.Id, game.Wager, -game.Wager, WagerGame.Mines);
                 var net = -game.Wager;
                 await _kfChatBot.SendChatMessageAsync(
                     $"{game.Creator.User.FormatUsername()}, you lost your {await game.Wager.FormatKasinoCurrencyAsync()} bet on mines, collecting {game.BetsPlaced.Count} gems until you hit one of {game.Mines} mines. Net: {await net.FormatKasinoCurrencyAsync()}. Balance: {await newBalance.FormatKasinoCurrencyAsync()}",
                     true, autoDeleteAfter: TimeSpan.FromSeconds(15));
-                await RemoveGame(gamblerId);
+                await RemoveGame(gambler, net, newBalance);
                 return false;
             }
             
             if (Money.GetRandomNumber(game.Creator, 0, 100) > 100 * HOUSE_EDGE)//if you didn't lose, check to see if the switch was flipped
             {
                 game.BetsPlaced.Add(coord);
-                await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid!, game.ToString());   
+                await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageId!.Value, game.ToString());   
                 await game.RigBoard(coord);
                 await Task.Delay(50);
-                await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid!, game.ToString());
+                await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageId!.Value, game.ToString());
                 _ = game.Explode(coord, msg);
                 var newBalance = await Money.NewWagerAsync(game.Creator.Id, game.Wager, -game.Wager, WagerGame.Mines);
                 var net = -game.Wager;
                 await _kfChatBot.SendChatMessageAsync(
                     $"R! {game.Creator.User.FormatUsername()}, you lost your {await game.Wager.FormatKasinoCurrencyAsync()} bet on mines, collecting {game.BetsPlaced.Count} gems until you hit one of {game.Mines} mines. Net: {await net.FormatKasinoCurrencyAsync()}. Balance: {await newBalance.FormatKasinoCurrencyAsync()}",
                     true, autoDeleteAfter: TimeSpan.FromSeconds(15));
-                await RemoveGame(gamblerId);
+                await RemoveGame(gambler, net, newBalance);
                 return false;
             }
             else
             {
                 game.BetsPlaced.Add(coord);
             }
-            await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid!, game.ToString());
+            await _kfChatBot.KfClient.EditMessageAsync(msg.ChatMessageId!.Value, game.ToString());
         }
 
 
