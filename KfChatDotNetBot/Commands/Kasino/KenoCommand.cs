@@ -103,7 +103,7 @@ public class KenoCommand : ICommand
             RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
-
+        
         if (numbers is < 1 or > 10) //if user picks invalid numbers
         {
             await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, you can only pick numbers from 1 - 10",
@@ -112,6 +112,14 @@ public class KenoCommand : ICommand
             return;
         }
 
+        //KasinoShop stuff -------------------------------------------------------------------------
+        if (botInstance.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+            HOUSE_EDGE += botInstance.BotServices.KasinoShop.Gambler_Profiles[user.KfId].HouseEdgeModifier;
+        }
+        //------------------------------------------------------------------------------------------
+        
         var payoutMultipliersHigh =
             new[,] //stole the payout multis from stake keno and re added the RTP, except for the 1000x
             {
@@ -193,6 +201,14 @@ public class KenoCommand : ICommand
                 $"{user.FormatUsername()}, you [color={colors[BuiltIn.Keys.KiwiFarmsRedColor].Value}]lost {await wager.FormatKasinoCurrencyAsync()}[/color]. Your balance is now: {await newBalance.FormatKasinoCurrencyAsync()}.",
                 true, autoDeleteAfter: cleanupDelay);
             botInstance.ScheduleMessageAutoDelete(_kenoTable ?? throw new Exception("Cannot clean up _kenoTable as it's null"), cleanupDelay);
+            //Kasino Shop stuff----------------------------------------------------------------------
+            if (botInstance.BotServices.KasinoShop != null)
+            {
+                await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+                await botInstance.BotServices.KasinoShop.ProcessWagerTracking(gambler, WagerGame.Keno, wager, -wager, newBalance);
+            }
+            //---------------------------------------------------------------------------------------
+
             return;
         }
 
@@ -204,6 +220,13 @@ public class KenoCommand : ICommand
             $"{user.FormatUsername()}, you [color={colors[BuiltIn.Keys.KiwiFarmsGreenColor].Value}]won {await win.FormatKasinoCurrencyAsync()} with a {payoutMulti}x multi![/color]. Your balance is now: {await newBalance.FormatKasinoCurrencyAsync()}.",
             true, autoDeleteAfter: cleanupDelay);
         botInstance.ScheduleMessageAutoDelete(_kenoTable ?? throw new Exception("Cannot clean up _kenotable as it's null"), cleanupDelay);
+        //Kasino Shop stuff----------------------------------------------------------------------
+        if (botInstance.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+            await botInstance.BotServices.KasinoShop.ProcessWagerTracking(gambler, WagerGame.Keno, wager, win, newBalance);
+        }
+        //---------------------------------------------------------------------------------------
     }
     
     private async Task AnimatedDisplayTable(List<int> playerNumbers, List<int> casinoNumbers, List<int> matches, ChatBot botInstance)
@@ -227,7 +250,7 @@ public class KenoCommand : ICommand
 
         _kenoTable = await botInstance.SendChatMessageAsync(displayMessage, true);
         var i = 0;
-        while (_kenoTable.ChatMessageUuid == null)
+        while (_kenoTable.ChatMessageId == null)
         {
             i++;
             if (_kenoTable.Status is SentMessageTrackerStatus.NotSending or SentMessageTrackerStatus.Lost) return;
@@ -235,7 +258,7 @@ public class KenoCommand : ICommand
             await Task.Delay(100);
         }
 
-        if (_kenoTable.ChatMessageUuid == null)
+        if (_kenoTable.ChatMessageId == null)
         {
             throw new Exception($"_kenoTable chat message ID never got populated. Tracker status is: {_kenoTable?.Status}");
         }
@@ -269,7 +292,7 @@ public class KenoCommand : ICommand
                 }
                 displayMessage += "[br]";
             }
-            await botInstance.KfClient.EditMessageAsync(_kenoTable.ChatMessageUuid, displayMessage);
+            await botInstance.KfClient.EditMessageAsync(_kenoTable.ChatMessageId!.Value, displayMessage);
             await Task.Delay(frameDelay);
             if (displayMessage.Length <= 79 && displayMessage.Contains(BlankSpaceDisplay) &&
                 (displayMessage.Contains(CasinoNumberDisplay) || displayMessage.Contains(MatchRevealDisplay) ||
