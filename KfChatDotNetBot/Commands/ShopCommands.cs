@@ -605,6 +605,7 @@ public class ShopStakeCommand : ICommand
     }
 }
 
+
 public class ShopUnstakeCommand : ICommand
 {
     public List<Regex> Patterns =>
@@ -661,6 +662,42 @@ public class ShopUnstakeCommand : ICommand
         }
 
         await botInstance.BotServices.KasinoShop.UnStake(gambler, amountUnstake, unstakeId, containsAll);
+    }
+}
+
+public class SmashCommand : ICommand
+{
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^smash", RegexOptions.IgnoreCase),
+    ];
+    
+    public string? HelpText => "destroy your <asset>, show your loaners you're really gonna do it dewd!!!";
+    public UserRight RequiredRight => UserRight.Loser;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop.ProcessSmash(gambler);
     }
 }
 
@@ -1078,6 +1115,237 @@ public class ShopWithdrawCommand : ICommand
         await botInstance.BotServices.KasinoShop.ProcessWithdraw(gambler, withdraw);
     }
 }
+
+/// <summary>
+/// RIGGING
+/// </summary>
+//--------------------------------------------------
+
+public class FlipSwitchCommand : ICommand
+{
+    private Rigging type = Rigging.Switch;
+
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^flip switch")
+    ];
+    public string? HelpText => "flips a switch";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop!.ProcessRigging(type);
+    }
+}
+
+public class PushButtonCommand : ICommand
+{
+    private Rigging type = Rigging.Button;
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^push button")
+    ];
+    public string? HelpText => "flips a switch";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop!.ProcessRigging(type);
+    }
+}
+
+public class PullLeverCommand : ICommand
+{
+    private Rigging type = Rigging.Lever;
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^pull lever")
+    ];
+    public string? HelpText => "flips a switch";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop!.ProcessRigging(type);
+    }
+}
+
+public class DialCommand : ICommand
+{
+    private Rigging type = Rigging.Dial;
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^dial (?<choice>up|down)")
+    ];
+    public string? HelpText => "flips a switch";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+        if (!arguments.TryGetValue("choice", out var choice)) return;
+        bool dialUp = choice.Value.ToLower() == "up";
+        await botInstance.BotServices.KasinoShop!.ProcessRigging(type, dial: dialUp);
+    }
+}
+
+public class KeypadCommand : ICommand
+{
+    private Rigging type = Rigging.Dial;
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^keypad (?<num>\d+(?:\.\d+)?)")
+    ];
+    public string? HelpText => "flips a switch";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        if (!arguments.TryGetValue("num", out var num)) return;
+        var number = Convert.ToDecimal(num.Value);
+        
+        await botInstance.BotServices.KasinoShop!.ProcessRigging(type, number);
+    }
+}
+
+public class PanelCommand : ICommand
+{
+    private Rigging type = Rigging.Dial;
+    public List<Regex> Patterns =>
+    [
+        new Regex(@"^panel")
+    ];
+    public string? HelpText => "flips a switch";
+    public UserRight RequiredRight => UserRight.TrueAndHonest;
+    public TimeSpan Timeout => TimeSpan.FromSeconds(30);
+    public RateLimitOptionsModel? RateLimitOptions => new RateLimitOptionsModel
+    {
+        MaxInvocations = 2,
+        Window = TimeSpan.FromSeconds(60)
+    };
+
+    public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
+        CancellationToken ctx)
+    {
+        var cleanupDelay = TimeSpan.FromSeconds(10);
+        if (botInstance.BotServices.KasinoShop == null)
+        {
+            await botInstance.SendChatMessageAsync("KasinoShop is not currently running.", true, autoDeleteAfter: cleanupDelay);
+            return;
+        }
+        var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
+        if (gambler == null)
+        {
+            throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        }
+        await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+
+        await botInstance.BotServices.KasinoShop!.GetCurrentRiggingState();
+    }
+}
+
+
+
+
+
 
 
 
