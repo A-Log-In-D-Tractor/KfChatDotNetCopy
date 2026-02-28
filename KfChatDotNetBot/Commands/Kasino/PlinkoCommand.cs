@@ -129,9 +129,17 @@ public class PlinkoCommand : ICommand
                 autoDeleteAfter: TimeSpan.FromSeconds(15));
             return;
         }*/
+        
         var gambler = await Money.GetGamblerEntityAsync(user.Id, ct: ctx);
         if (gambler == null)
             throw new InvalidOperationException($"Caught a null when retrieving gambler for {user.KfUsername}");
+        //KasinoShop stuff -------------------------------------------------------------------------
+        if (botInstance.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+            HOUSE_EDGE += botInstance.BotServices.KasinoShop.Gambler_Profiles[user.KfId].HouseEdgeModifier;
+        }
+        //------------------------------------------------------------------------------------------
         int numberOfBalls = 0;
         if (!arguments.TryGetValue("number", out var number))
         {
@@ -173,7 +181,7 @@ public class PlinkoCommand : ICommand
         //game starts here
         int breakCounter = 0;
         var plinkoMessageID = await botInstance.SendChatMessageAsync(PlinkoBoardDisplay(ballsInPlay), true, autoDeleteAfter: cleanupDelay);
-        while (plinkoMessageID.ChatMessageUuid == null && breakCounter < 1000) { 
+        while (plinkoMessageID.ChatMessageId == null && breakCounter < 1000) { 
             await Task.Delay(100, ctx);
             breakCounter++;
         }
@@ -195,7 +203,7 @@ public class PlinkoCommand : ICommand
                 ballsNotInPlay.RemoveAt(0);
             }
             PlinkoMessage = PlinkoBoardDisplay(ballsInPlay) + "[br]" + lastPayoutMessage;
-            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageUuid!, PlinkoMessage);
+            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageId!.Value,PlinkoMessage);
             if (ballsInPlay[0].POSITION.row == DIFFICULTY - 1) //once your ball has reached the bottom calculate the payout
             {
                 currentPayout = wager * PlinkoPayoutBoard[ballsInPlay[0].POSITION.col];
@@ -219,13 +227,20 @@ public class PlinkoCommand : ICommand
 
             await Task.Delay(300, ctx);
             PlinkoMessage = PlinkoBoardDisplay(ballsInPlay) + "[br]" + lastPayoutMessage;
-            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageUuid!, PlinkoMessage);
+            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageId!.Value, PlinkoMessage);
             await Task.Delay(300, ctx);
 
         }
         var newBalance = await Money.NewWagerAsync(gambler.Id, wager*numberOfBalls, payout-(wager*numberOfBalls), WagerGame.Plinko, ct: ctx);
         await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, [u]you won {await payout.FormatKasinoCurrencyAsync()} from {numberOfBalls} plinko balls worth ${wager} KKK. Balance: {await newBalance.FormatKasinoCurrencyAsync()}", true, autoDeleteAfter: cleanupDelay);
-        
+        //Kasino Shop stuff----------------------------------------------------------------------
+        if (botInstance.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+            await botInstance.BotServices.KasinoShop.ProcessWagerTracking(gambler, WagerGame.Plinko, wager*numberOfBalls, payout-(wager*numberOfBalls), newBalance);
+        }
+        //---------------------------------------------------------------------------------------
+
     }
 
     public string PlinkoBoardDisplay(List<PlinkoBall> balls)
