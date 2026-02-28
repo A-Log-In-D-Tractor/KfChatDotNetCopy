@@ -41,6 +41,7 @@ public class BotServices
     private ShuffleDotUs? _shuffleDotUs;
     private YouTubePubSub? _youTubePubSub;
     public KasinoRain? KasinoRain;
+    public KasinoShop? KasinoShop;
     
     private Task? _websocketWatchdog;
     private Task? _howlggGetUserTimer;
@@ -93,7 +94,8 @@ public class BotServices
             BuildOwncastLiveStatusCheck(),
             BuildShuffleDotUs(),
             BuildYouTubePubSub(),
-            BuildKasinoRain()
+            BuildKasinoRain(),
+            BuildKasinoShop()
         ];
         try
         {
@@ -115,7 +117,12 @@ public class BotServices
         _logger.Debug("Building the Kasino Rain thingy");
         KasinoRain = new KasinoRain(_chatBot, _cancellationToken);
     }
-    
+
+    private async Task BuildKasinoShop()
+    {
+        _logger.Debug("Building kasino shop");
+        KasinoShop = new KasinoShop(_chatBot);
+    }
     private async Task BuildShuffle()
     {
         _logger.Debug("Building Shuffle");
@@ -736,19 +743,19 @@ public class BotServices
     private async Task OnYeetWinEditTaskAsync(SentMessageTrackerModel oldMsg, string newMsg)
     {
         var i = 0;
-        while (oldMsg.ChatMessageUuid == null && i < 50)
+        while (oldMsg.ChatMessageId == null && i < 50)
         {
             await Task.Delay(100, _cancellationToken);
             i++;
         }
 
-        if (oldMsg.ChatMessageUuid == null)
+        if (oldMsg.ChatMessageId == null)
         {
             _logger.Error($"Timed out waiting to figure out our message ID");
             return;
         }
 
-        await _chatBot.KfClient.EditMessageAsync(oldMsg.ChatMessageUuid, newMsg);
+        await _chatBot.KfClient.EditMessageAsync(oldMsg.ChatMessageId.Value, newMsg);
     }
     
     private void OnHowlggBetHistory(object sender, HowlggBetHistoryResponseModel data)
@@ -918,7 +925,7 @@ public class BotServices
                 BuiltIn.Keys.KiwiFarmsRedColor, BuiltIn.Keys.KiwiFarmsGreenColor
             ]);
         var patience = 0;
-        while (msg.ChatMessageUuid == null)
+        while (msg.ChatMessageId == null)
         {
             patience++;
             if (msg.Status is SentMessageTrackerStatus.Lost or SentMessageTrackerStatus.NotSending || patience > 50)
@@ -935,11 +942,11 @@ public class BotServices
         {
             if (seconds % 2 == 0)
             {
-                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid, $"[color={settings[BuiltIn.Keys.KiwiFarmsGreenColor].Value}]{msg.Message}[/color]");
+                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageId.Value, $"[color={settings[BuiltIn.Keys.KiwiFarmsGreenColor].Value}]{msg.Message}[/color]");
             }
             else
             {
-                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid, $"[color={settings[BuiltIn.Keys.KiwiFarmsRedColor].Value}]{msg.Message}[/color]");
+                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageId.Value, $"[color={settings[BuiltIn.Keys.KiwiFarmsRedColor].Value}]{msg.Message}[/color]");
             }
 
             await Task.Delay(1000, _cancellationToken);
