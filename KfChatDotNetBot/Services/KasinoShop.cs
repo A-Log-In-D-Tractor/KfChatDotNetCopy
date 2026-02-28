@@ -32,6 +32,17 @@ public class KasinoShop
     public KasinoShop(ChatBot kfChatBot)
     {
         BotInstance = kfChatBot;
+        
+        var connectionString = SettingsProvider.GetValueAsync(BuiltIn.Keys.BotRedisConnectionString).Result;
+        if (string.IsNullOrEmpty(connectionString.Value))
+        {
+            _logger.Error($"Can't initialize the Kasino Mines service as Redis isn't configured in {BuiltIn.Keys.BotRedisConnectionString}");
+            return;
+        }
+
+        var redis = ConnectionMultiplexer.Connect(connectionString.Value);
+        _redisDb = redis.GetDatabase();
+        
         LoadProfiles();
         
     }
@@ -40,20 +51,21 @@ public class KasinoShop
     {
         if (_redisDb == null) throw new InvalidOperationException("Kasino shop service isn't initialized");
         var json = await _redisDb.StringGetAsync($"Shop.Profiles.State");
-        var json2 = await _redisDb.StringGetAsync($"Shop.Loans.State");
+        var json2 = await _redisDb.StringGetAsync($"Shop.LoanIds.State");
         if (string.IsNullOrEmpty(json)) return;
         try
         {
             var options = new JsonSerializerOptions{IncludeFields = true};
             Gambler_Profiles = JsonSerializer.Deserialize<Dictionary<int, KasinoShopProfile>>(json.ToString(), options) ??
                           throw new InvalidOperationException();
-            
+            activeLoanIds = JsonSerializer.Deserialize<int[]>(json2.ToString(), options) ?? throw new InvalidOperationException();
         }
         catch (Exception e)
         {
             _logger.Error(e);
-            _logger.Error("Potentially failed to deserialize active mines games in GetSavedGames() in KasinoMines in Services");
+            _logger.Error("Potentially failed to deserialize kasinoshop details");
             Gambler_Profiles = new Dictionary<int, KasinoShopProfile>();
+            activeLoanIds = new int[0];
         }
     }
 
@@ -66,12 +78,15 @@ public class KasinoShop
             WriteIndented = false
         };
         var json = JsonSerializer.Serialize(Gambler_Profiles, options);
+        var json2 = JsonSerializer.Serialize(activeLoanIds, options);
         await _redisDb.StringSetAsync($"Shop.Profiles.State", json, null, When.Always);
+        await _redisDb.StringSetAsync($"Shop.LoanIds.State", json2, null, When.Always);
     }
 
     public async Task ResetProfiles()
     {
         Gambler_Profiles = new Dictionary<int, KasinoShopProfile>();
+        activeLoanIds = new int[0];
         await SaveProfiles();
     }
 
@@ -88,25 +103,6 @@ public class KasinoShop
             Gambler_Profiles[key].Loans.Clear();
         }
         await SaveProfiles();
-    }
-
-    public void ClearInterest(GamblerDbModel gambler)
-    {
-        int kfId = gambler.User.KfId;
-        foreach (var loanKey in Gambler_Profiles[kfId].Loans.Keys)
-        {
-            var loan = Gambler_Profiles[kfId].Loans[loanKey];
-
-            if (loan.payoutAmount > loan.amount)
-            {
-                Gambler_Profiles[kfId].Loans.Remove(loanKey);
-                Gambler_Profiles[loan.payableToKf].Loans.Remove(loanKey);
-                loan.payoutAmount = loan.amount;
-                Gambler_Profiles[kfId].Loans.Add(loanKey, loan);
-                Gambler_Profiles[loan.payableToKf].Loans.Add(loanKey, loan);
-            }
-            //else you already paid the interest part of the loan so nothing to clear
-        }
     }
 
     public async Task GetCurrentRiggingState()
@@ -366,7 +362,36 @@ public class KasinoShop
         return true;
     }
 
-    
+    public async Task PrintSmashableShop(GamblerDbModel gambler)
+    {
+        string str = "";
+        int counter = 1;
+        foreach (var type in Enum.GetValues<SmashableType>())
+        {
+            str += $"{counter}: {type} - $10000 KKK[br]";
+        }
+    }
+
+    public async Task ProcessSmashablePurchase(GamblerDbModel gambler, int type)
+    {
+        var smashTypes = Enum.GetValues<SmashableType>();
+        type--;
+        if (type < 0 || type > smashTypes.Length - 1)
+        {
+            await BotInstance.SendChatMessageAsync(
+                $"{gambler.User.FormatUsername()}, invalid smashable type. 1 - {smashTypes.Length}", true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            return;
+        }
+        if (Gambler_Profiles[gambler.User.KfId].Balance()[1] < 10000)
+        {
+            await BotInstance.SendChatMessageAsync(
+                $"{gambler.User.FormatUsername()}, you don't have enough krypto to buy smashables. {await Gambler_Profiles[gambler.User.KfId].FormatBalanceAsync()}");
+            return;
+        }
+        var id = GenerateRandomId(gambler);
+        Gambler_Profiles[gambler.User.KfId].Assets.Add(id, new Smashable(id, 10000, smashTypes[type]));
+        Gambler_Profiles[gambler.User.KfId].ModifyBalance(-10000);
+    }
     public async Task ProcessRepayment(GamblerDbModel payerGambler, UserDbModel payer, int payeeKfId, decimal amount) //loans can be repaid from crypto balance and kasino balance. it prefers to take from your crypto balance first if you have any
     {
         decimal payerTotalBalance = payerGambler.Balance + Gambler_Profiles[payer.KfId].Balance()[0];
@@ -393,12 +418,24 @@ public class KasinoShop
             await BotInstance.SendChatMessageAsync($"{payer.FormatUsername()}, you don't have a loan with {payeeKfId}.");
             return;
         }
+        var theloan = Gambler_Profiles[payeeKfId].Loans[loanId];
         //compare the amount paid to the amount of the loan
-        if (amount >= Gambler_Profiles[payer.KfId].Loans[loanId].payoutAmount)
+        if (amount >= theloan.payoutAmount)
         {
             //if the amount is more or equal, clear the loan when you pay, and give the payer credit score bonus for repaying the loan
-            amount = Gambler_Profiles[payer.KfId].Loans[loanId].payoutAmount;
+            amount = theloan.payoutAmount;
             Gambler_Profiles[payer.KfId].KreditScore += Convert.ToInt32(Gambler_Profiles[payer.KfId].Loans[loanId].amount * 3 / 4);
+            Gambler_Profiles[payer.KfId].Loans.Remove(loanId);
+            Gambler_Profiles[payeeKfId].Loans.Remove(loanId);
+            var newLoans = new int[activeLoanIds!.Length - 1];
+            if (activeLoanIds.Length > 1)
+            {
+                for (int i = 0; i < activeLoanIds.Length - 1; i++)
+                {
+                    if (activeLoanIds[i] != loanId) newLoans[i] = activeLoanIds[i];
+                }
+            }
+            activeLoanIds = newLoans;
         }
         else if (amount < Gambler_Profiles[payeeKfId].Loans[loanId].payoutAmount)
         {
@@ -597,14 +634,11 @@ public class KasinoShop
         await SaveProfiles();
     }
     
-    public async Task ProcessJuicerOrRainTracking(GamblerDbModel sender, List<GamblerDbModel> recievers, decimal amountPerReciever)
+    public async Task ProcessJuicerOrRainTracking(GamblerDbModel sender, GamblerDbModel reciever, decimal amountPerReciever)
     {
-        Gambler_Profiles[sender.User.KfId].Tracker.AddWithdrawal(amountPerReciever * recievers.Count);
-        foreach (var reciever in recievers)
-        {
-            if (Gambler_Profiles.ContainsKey(reciever.User.KfId)) Gambler_Profiles[reciever.User.KfId].Tracker.AddDeposit(amountPerReciever);
-        }
-
+        Gambler_Profiles[sender.User.KfId].Tracker.AddWithdrawal(amountPerReciever);
+        if (Gambler_Profiles.ContainsKey(reciever.User.KfId)) Gambler_Profiles[reciever.User.KfId].Tracker.AddDeposit(amountPerReciever);
+        if (Gambler_Profiles.ContainsKey(sender.User.KfId)) Gambler_Profiles[sender.User.KfId].Tracker.AddWithdrawal(amountPerReciever);
         await SaveProfiles();
     }
     
@@ -1562,13 +1596,13 @@ public class KasinoShop
         public bool isSmashed = false;
         public decimal currentValue;
         
-        public Smashable(int id, decimal value, string name)
+        public Smashable(int id, decimal value, SmashableType type)
         {
             Id = id;
             originalValue = value;
             currentValue = value;
-            type = AssetType.Smashable;
-            this.name = name;
+            this.type = AssetType.Smashable;
+            this.name = $"{type}";
             acquired = DateTime.UtcNow;
             ValueChangeReports = new();
         }
@@ -1860,46 +1894,45 @@ public class KasinoShop
 
     public static readonly Dictionary<string, decimal> CsSkinTags = new()
     {
-        {"SNEED", 0},
-        {"R", 0},
-        {"RIGGED", 0},
-        {"GREEDY", 0},
-        {"DEWISH", 0},
-        {"JEWISH", 0},
-        {"SCAMMER", 0},
-        {"SCAM", 0},
-        {"5", 0},
-        {"9", 0},
-        {"OSRS", 0},
-        {"666", 0},
-        {"CRACK", 0},
-        {"WEED", 0},
-        {"EEEEEEEEEE", 0},
-        {"COFFEE", 0},
-        {"FATGO", 0},
-        {"YO", 0},
-        {"ELF", 0},
-        {"OMFG", 0},
-        {"IHML", 0},
-        {"FUCKIN DEWD", 0},
-        {"MILF", 0},
-        {"KKK", 0},
-        {"KASINO", 0},
-        {"METH", 0},
-        {"GOOBR", 0},
-        {"TRAPPER", 0},
-        {"TRAPPERTURD", 0},
-        {"CHRISTMAS", 0},
-        {"MR.CHRISTMAS", 0},
-        {"DEPAKOTE", 0},
-        {"RAT", 0},
-        {"NULL", 0},
-        {"MATI", 0},
-        {"GERMAN RAP", 0},
-        {"EVIL EDDIE", 0},
-        {"NASTY NOAH", 0},
-        {"BOSSMAN", 0},
-        {"RATDAD", 0},
+        {"SNEED", 10000000},
+        {"R", 9000000},
+        {"RIGGED", 8000000},
+        {"GREEDY", 100000},
+        {"DEWISH", 6000000},
+        {"JEWISH", 6000000},
+        {"SCAMMER", 7000000},
+        {"SCAM", 7777777},
+        {"5", 5555555},
+        {"9", 9999999},
+        {"OSRS", 1000},
+        {"666", 6666666},
+        {"CRACK", 5000000},
+        {"WEED", 4200000},
+        {"EEEEEEEEEE", 3333333},
+        {"COFFEE", 3000000},
+        {"FATGO", 2000000},
+        {"YO", 75000},
+        {"ELF", 60000},
+        {"OMFG", 20000},
+        {"IHML", 7000},
+        {"FUCKIN DEWD", 60000},
+        {"MILF", 40000},
+        {"KKK", 1000000},
+        {"KASINO", 1000000},
+        {"METH", 4000000},
+        {"GOOBR", 2000000},
+        {"TRAPPER", 500000},
+        {"TRAPPERTURD", 100000},
+        {"CHRISTMAS", 10000},
+        {"MR.CHRISTMAS", 10000},
+        {"DEPAKOTE", 1000},
+        {"RAT", 50000},
+        {"MATI", 20000},
+        {"GERMAN RAP", 15000},
+        {"EVIL EDDIE", 10000},
+        {"NASTY NOAH", 5000},
+        {"BOSSMAN", 25000},
+        {"RATDAD", 80000},
         {"PICKLETIME", -1000000m},
         
     };
@@ -1915,67 +1948,65 @@ public class KasinoShop
 
     public static readonly Dictionary<string, decimal> CsSkinEmotes = new()
     {
-        {"🤣", 0},
-        {"😂", 0},
-        {"🙂", 0},
-        {"😝", 0},
-        {"🤨", 0},
-        {"🙄", 0},
-        {"🤥", 0},
-        {"🤧", 0},
-        {"🤯", 0},
-        {"😭", 0},
-        {"😤", 0},
-        {"💩", 0},
-        {"💢", 0},
-        {"💥", 0},
-        {"💤", 0},
-        {"🫵", 0},
-        {"🙏", 0},
-        {"🎅", 0},
-        {"🐀", 0},
-        {"🐹", 0},
-        {"🦨", 0},
-        {"🐦‍🔥", 0},
-        {"🐍", 0},
-        {"🐉", 0},
-        {"🦞", 0},
-        {"☘", 0},
-        {"🍀", 0},
-        {"🥩", 0},
-        {"🚔", 0},
-        {"🚗", 0},
-        {"✈", 0},
-        {"☁", 0},
-        {"🌨", 0},
-        {":winner:", 0},
-        {":juice:", 0},
-        {":ross:", 0},
-        {"♠", 0},
-        {"♥", 0},
-        {"♦", 0},
-        {"♣", 0},
-        {"💎", 0},
-        {"🪫", 0},
-        {"🪙", 0},
-        {"💵", 0},
-        {"🧲", 0},
-        {"💊", 0},
-        {"🚬", 0},
-        {"🪪", 0},
-        {"🚭", 0},
-        {"✡", 0},
-        {"❓", 0},
-        {"💲", 0},
-        {"🆗", 0},
-        {"🤡", 0},
-        {"👅", 0},
-        {"👴", 0},
-        {"🛹", 0},
+        {"🤣", 15000},
+        {"😂", 14000},
+        {"🙂", 13000},
+        {"😝", 12000},
+        {"🤨", 11000},
+        {"🙄", 10000},
+        {"🤥", 20000},
+        {"🤧", 30000},
+        {"🤯", 8000000},
+        {"😭", 30000},
+        {"😤", 40000},
+        {"💩", 60000},
+        {"💢", 700000},
+        {"💥", 600000},
+        {"💤", 10000},
+        {"🫵", 70000},
+        {"🙏", 50000},
+        {"🎅", 10000},
+        {"🐀", 10000000},
+        {"🐹", 220000},
+        {"🦨", 110000},
+        {"🐦‍🔥", 330000},
+        {"🐍", 88000},
+        {"🐉", 77000},
+        {"🦞", 66000},
+        {"☘", 300000},
+        {"🍀", 1000000},
+        {"🥩", 400000},
+        {"🚔", 500000},
+        {"🚗", 50000},
+        {"✈", 1000000},
+        {":winner:", 4000000},
+        {":juice:", 2000000},
+        {":ross:", 3000000},
+        {"♠", 75000},
+        {"♥", 75000},
+        {"♦", 75000},
+        {"♣", 75000},
+        {"💎", 150000},
+        {"🪫", 85000},
+        {"🪙", 45000},
+        {"💵", 10000},
+        {"🧲", 25000},
+        {"💊", 100000},
+        {"🚬", 650000},
+        {"🪪", 750000},
+        {"🚭", 820000},
+        {"✡", 6666666},
+        {"❓", 250000},
+        {"💲", 500000},
+        {"🆗", 360000},
+        {"🤡", 1000000},
+        {"👅", 9999999},
+        {"👴", 105000},
+        {"🛹", 90000},
         {"🥒", -1000000m},
-        {"🎄", 0},
-        {"🕹", 0},
-        {"🎰", 0},
+        {"🎄", 42069},
+        {"🕹", 12000},
+        {"🎰", 7777777},
         
     };
 
