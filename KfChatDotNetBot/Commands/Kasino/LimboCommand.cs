@@ -84,6 +84,14 @@ public class LimboCommand : ICommand
             return;
         }
 
+        //KasinoShop stuff -------------------------------------------------------------------------
+        if (botInstance.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+            HOUSE_EDGE += botInstance.BotServices.KasinoShop.Gambler_Profiles[user.KfId].HouseEdgeModifier;
+        }
+        //------------------------------------------------------------------------------------------
+        
         if (!arguments.TryGetValue("number", out var number))
         {
             limboNumber = 2;
@@ -110,6 +118,14 @@ public class LimboCommand : ICommand
             await botInstance.SendChatMessageAsync($"[b][color={colorToUse}] {casinoNumbers[1]:N2}[/color][/b][br]{user.FormatUsername()}, you " +
                                                    $"[color={settings[BuiltIn.Keys.KiwiFarmsGreenColor].Value}] won {await win.FormatKasinoCurrencyAsync()}![/color] " +
                                                    $"Your balance is now: {await newBalance.FormatKasinoCurrencyAsync()}!", true, autoDeleteAfter: cleanupDelay);
+            //Kasino Shop stuff----------------------------------------------------------------------
+            if (botInstance.BotServices.KasinoShop != null)
+            {
+                await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+                await botInstance.BotServices.KasinoShop.ProcessWagerTracking(gambler, WagerGame.Limbo, wager, win, newBalance);
+            }
+            //---------------------------------------------------------------------------------------
+
             return;
         }
 
@@ -123,7 +139,13 @@ public class LimboCommand : ICommand
             $"[b][color={colorToUse}] {casinoNumbers[1]:N2}[/color][/b][br]{user.FormatUsername()}, you [color={settings[BuiltIn.Keys.KiwiFarmsRedColor].Value}]" +
             $"lost {await wager.FormatKasinoCurrencyAsync()}[/color]. Your balance is now: {await newBalance.FormatKasinoCurrencyAsync()}.",
             true, autoDeleteAfter: cleanupDelay);
-
+        //Kasino Shop stuff----------------------------------------------------------------------
+        if (botInstance.BotServices.KasinoShop != null)
+        {
+            await GlobalShopFunctions.CheckProfile(botInstance, user, gambler);
+            await botInstance.BotServices.KasinoShop.ProcessWagerTracking(gambler, WagerGame.Limbo, wager, -wager, newBalance);
+        }
+        //---------------------------------------------------------------------------------------
     }
     
     //returns a distribution with a 1/multi chance of getting a number below or above sqr(min * max) (so max should basically be multi^2). basically gives you a 1/x fair chance to win
