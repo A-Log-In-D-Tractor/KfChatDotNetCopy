@@ -48,10 +48,10 @@ public class RouletteCommand : ICommand
     private ApplicationDbContext _dbContext = new();
 
     // European Roulette wheel configuration
-    private static readonly HashSet<int> RedNumbers = new() 
+    private static readonly HashSet<int> BlackNumbers = new() 
         { 1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36 };
     
-    private static readonly HashSet<int> BlackNumbers = new() 
+    private static readonly HashSet<int> RedNumbers = new() 
         { 2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35 };
 
     public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
@@ -120,6 +120,7 @@ public class RouletteCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, invalid syntax. Use: !roulette <amount> <bet>",
                 true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
 
@@ -144,6 +145,7 @@ public class RouletteCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, your balance of {await gambler.Balance.FormatKasinoCurrencyAsync()} isn't enough for this wager.",
                 true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
         
@@ -152,15 +154,7 @@ public class RouletteCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, you have to wager more than {await wager.FormatKasinoCurrencyAsync()}", true,
                 autoDeleteAfter: TimeSpan.FromSeconds(10));
-            return;
-        }
-
-        decimal wagerLimit = 25;
-        if (wager > wagerLimit)
-        {
-            await botInstance.SendChatMessageAsync(
-                $"{user.FormatUsername()}, wagers are temporarily limited to {await wagerLimit.FormatKasinoCurrencyAsync()} during testing",
-                true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
 
@@ -171,6 +165,7 @@ public class RouletteCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, invalid bet. Valid bets: 0-36, red/black, odd/even, low/high, 1st12/2nd12/3rd12, col1/col2/col3",
                 true, autoDeleteAfter: TimeSpan.FromSeconds(10));
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
 
@@ -267,7 +262,7 @@ public class RouletteCommand : ICommand
             
             if (activeRound != null)
             {
-                activeRound.CountdownMessageId = countdownMessage.ChatMessageId;
+                activeRound.CountdownMessageId = countdownMessage.ChatMessageUuid;
                 await SaveRound(activeRound);
             }
 
@@ -296,7 +291,7 @@ public class RouletteCommand : ICommand
                 try
                 {
                     var updatedMessage = await FormatCountdownMessage(endTime);
-                    await botInstance.KfClient.EditMessageAsync(countdownMessage.ChatMessageId!.Value, updatedMessage);
+                    await botInstance.KfClient.EditMessageAsync(countdownMessage.ChatMessageUuid!, updatedMessage);
                     
                     var timeSinceLastUpdate = DateTimeOffset.UtcNow - lastUpdate;
                     logger.Debug($"Countdown updated (elapsed: {timeSinceLastUpdate.TotalSeconds:F1}s, remaining: {remaining.TotalSeconds:F0}s)");
@@ -419,12 +414,12 @@ public class RouletteCommand : ICommand
             logger.Info($"Animation uploaded: {animationUrl}");
 
             // Update countdown message to show it's spinning
-            if (round.CountdownMessageId.HasValue)
+            if (round.CountdownMessageId != null)
             {
                 var spinningMessage = $"🎰 [B]SPINNING THE WHEEL...[/B] 🎰[br][br]" +
                                      "Watch the animation below!";
                 await botInstance.KfClient.EditMessageAsync(
-                    round.CountdownMessageId.Value, 
+                    round.CountdownMessageId, 
                     spinningMessage);
             }
 
@@ -491,10 +486,10 @@ public class RouletteCommand : ICommand
                            $"All {round.Bets.Count} bet(s) have been refunded (total: {await totalRefunded.FormatKasinoCurrencyAsync()}).[br]" +
                            $"Please try again.";
 
-        if (round.CountdownMessageId.HasValue)
+        if (round.CountdownMessageId != null)
         {
             await botInstance.KfClient.EditMessageAsync(
-                round.CountdownMessageId.Value,
+                round.CountdownMessageId,
                 cancelMessage);
         }
         else
@@ -712,10 +707,10 @@ public class RouletteCommand : ICommand
                            $"Cancelled by {user.FormatUsername()}[br]" +
                            $"Refunded {round.Bets.Count} bet(s) totaling {await totalRefunded.FormatKasinoCurrencyAsync()}";
 
-        if (round.CountdownMessageId.HasValue)
+        if (round.CountdownMessageId != null)
         {
             await botInstance.KfClient.EditMessageAsync(
-                round.CountdownMessageId.Value,
+                round.CountdownMessageId,
                 cancelMessage);
         }
         else
@@ -889,7 +884,7 @@ public class RouletteCommand : ICommand
     {
         public required int RoundId { get; init; }
         public required DateTimeOffset StartTime { get; init; }
-        public int? CountdownMessageId { get; set; }
+        public string? CountdownMessageId { get; set; }
         public required List<RouletteBetInfo> Bets { get; init; }
     }
 

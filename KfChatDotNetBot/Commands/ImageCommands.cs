@@ -162,7 +162,7 @@ public class GetRandomImage : ICommand
     {
         Window = TimeSpan.FromSeconds(30),
         MaxInvocations = 7,
-        Flags = RateLimitFlags.UseEntireMessage
+        Flags = RateLimitFlags.UseEntireMessage | RateLimitFlags.NoResponse
     };
     public async Task RunCommand(ChatBot botInstance, MessageModel message, UserDbModel user, GroupCollection arguments,
         CancellationToken ctx)
@@ -206,6 +206,7 @@ public class GetRandomImage : ICommand
         }
         else if (key == "chink" && settings[BuiltIn.Keys.BotImageChinkSelfDestruct].ToBoolean())
         {
+            RateLimitService.AddEntry(user, this, message.MessageRawHtmlDecoded);
             timeToDeletion = TimeSpan.FromMilliseconds(settings[BuiltIn.Keys.BotImageChinkSelfDestructDelay].ToType<int>());
         }
         await botInstance.SendChatMessageAsync($"[img]{image.Url}[/img]", true, autoDeleteAfter: timeToDeletion);

@@ -36,7 +36,8 @@ public class ChatBot
     private DateTime _lastReconnectAttempt = DateTime.UtcNow;
     private List<ScheduledAutoDeleteModel> _scheduledDeletions = [];
     private Task _scheduledAutoDeleteTask;
-    
+    private List<UserModel> _currentUsersInChat = [];
+
     public ChatBot()
     {
         _logger.Info("Bot starting!");
@@ -193,7 +194,7 @@ public class ChatBot
             foreach (var deletion in _scheduledDeletions)
             {
                 if (deletion.DeleteAt > now) continue;
-                if (deletion.Message.ChatMessageId == null)
+                if (deletion.Message.ChatMessageUuid == null)
                 {
                     _logger.Error($"Can't clean up {deletion.Message.Reference} as it doesn't have a chat message ID");
                     if (failures.TryGetValue(deletion.Message.Reference, out var failure))
@@ -213,7 +214,7 @@ public class ChatBot
                     }
                     continue;
                 }
-                await KfClient.DeleteMessageAsync(deletion.Message.ChatMessageId.Value);
+                await KfClient.DeleteMessageAsync(deletion.Message.ChatMessageUuid);
                 removals.Add(deletion);
             }
             foreach (var removal in removals)
@@ -295,7 +296,7 @@ public class ChatBot
             // Update last edit timestamp
             if (message.Author.Username == settings[BuiltIn.Keys.KiwiFarmsUsername].Value && message.MessageEditDate != null)
             {
-                var sentMessage = SentMessages.FirstOrDefault(x => x.ChatMessageId == message.MessageId);
+                var sentMessage = SentMessages.FirstOrDefault(x => x.ChatMessageUuid == message.MessageUuid);
                 if (sentMessage != null)
                 {
                     sentMessage.LastEdited = message.MessageEditDate.Value;
@@ -321,14 +322,14 @@ public class ChatBot
                         // back to you. So this fallback should be generally correct and will account for the occasional
                         // mismatch due to messages not being 1:1 with what we thought we sent
                         _logger.Info("Just going to lazily associate it with the latest message");
-                        latest.ChatMessageId = message.MessageId;
+                        latest.ChatMessageUuid = message.MessageUuid;
                         latest.Delay = DateTimeOffset.UtcNow - latest.SentAt;
                         latest.Status = SentMessageTrackerStatus.ResponseReceived;
                     }
                 }
                 else
                 {
-                    sentMessage.ChatMessageId = message.MessageId;
+                    sentMessage.ChatMessageUuid = message.MessageUuid;
                     sentMessage.Delay = DateTimeOffset.UtcNow - sentMessage.SentAt;
                     sentMessage.Status = SentMessageTrackerStatus.ResponseReceived;
                 }
@@ -350,7 +351,7 @@ public class ChatBot
             // So this avoids reprocessing messages on reconnect while being able to handle edits, even if the edit came
             // during a disconnect / reconnect event
             if (!_seenMessages.Any(msg =>
-                    msg.MessageId == message.MessageId && msg.LastEdited == message.MessageEditDate) &&
+                    msg.MessageUuid == message.MessageUuid && msg.LastEdited == message.MessageEditDate) &&
                 !InitialStartCooldown)
             {
                 _logger.Debug("Passing message to command interface");
@@ -366,14 +367,14 @@ public class ChatBot
             }
 
             // Update or add the element to keep it in sync
-            var existingMsg = _seenMessages.FirstOrDefault(msg => msg.MessageId == message.MessageId);
+            var existingMsg = _seenMessages.FirstOrDefault(msg => msg.MessageUuid == message.MessageUuid);
             if (existingMsg != null)
             {
                 existingMsg.LastEdited = message.MessageEditDate;
             }
             else
             {
-                _seenMessages.Add(new SeenMessageMetadataModel {MessageId = message.MessageId, LastEdited = message.MessageEditDate});
+                _seenMessages.Add(new SeenMessageMetadataModel {MessageUuid = message.MessageUuid, LastEdited = message.MessageEditDate});
             }
             UpdateUserLastActivityAsync(message.Author.Id, WhoWasActivityType.Message).Wait(_cancellationToken);
             // Strip weird control characters and just allow basic punctuation + whitespace
@@ -383,7 +384,8 @@ public class ChatBot
                 message.Author.Username != settings[BuiltIn.Keys.KiwiFarmsUsername].Value &&
                 settings[BuiltIn.Keys.BotRespondToDiscordImpersonation].ToBoolean() &&
                 (kindaSanitized.Contains("discord16.png") ||
-                 kindaSanitized.Contains("mBossmanJack:", StringComparison.CurrentCultureIgnoreCase) || 
+                 (kindaSanitized.Contains("mBossmanJack:", StringComparison.CurrentCultureIgnoreCase) && 
+                  kindaSanitized.Contains("[img]", StringComparison.CurrentCultureIgnoreCase)) || 
                  kindaSanitized.Contains("by @KenoGPT at", StringComparison.CurrentCultureIgnoreCase)))
             {
                 SendChatMessage($"☝️ {message.Author.Username} is a nigger faggot", true);
@@ -404,7 +406,7 @@ public class ChatBot
     /// <param name="lengthLimit">Length limit to enforce in bytes</param>
     /// <param name="autoDeleteAfter">Length of time until the message is auto deleted, null to disable. Starts counting from when the message is echoed by Sneedchat</param>
     /// <returns>An object you can use to check the status of the message and get its ID for editing/deleting later</returns>
-    public async Task<SentMessageTrackerModel> SendChatMessageAsync(string message, bool bypassSeshDetect = false, LengthLimitBehavior lengthLimitBehavior = LengthLimitBehavior.TruncateNicely, int lengthLimit = 1023, TimeSpan? autoDeleteAfter = null)
+    public async Task<SentMessageTrackerModel> SendChatMessageAsync(string message, bool bypassSeshDetect = false, LengthLimitBehavior lengthLimitBehavior = LengthLimitBehavior.TruncateNicely, int lengthLimit = 2048, TimeSpan? autoDeleteAfter = null)
     {
         var settings = await SettingsProvider
             .GetMultipleValuesAsync([
@@ -500,7 +502,7 @@ public class ChatBot
     /// <param name="autoDeleteAfter">Length of time until the message is auto deleted, null to disable. Starts counting from when the message is echoed by Sneedchat</param>
     /// <returns>An object you can use to check the status of the message and get its ID for editing/deleting later</returns>
     public SentMessageTrackerModel SendChatMessage(string message, bool bypassSeshDetect = false,
-        LengthLimitBehavior lengthLimitBehavior = LengthLimitBehavior.TruncateNicely, int lengthLimit = 1023, TimeSpan? autoDeleteAfter = null)
+        LengthLimitBehavior lengthLimitBehavior = LengthLimitBehavior.TruncateNicely, int lengthLimit = 2048, TimeSpan? autoDeleteAfter = null)
     {
         return SendChatMessageAsync(message, bypassSeshDetect, lengthLimitBehavior, lengthLimit, autoDeleteAfter).Result;
     }
@@ -546,7 +548,7 @@ public class ChatBot
         }
 
         var patienceEnds = DateTimeOffset.UtcNow.Add(patience.Value);
-        while (message.ChatMessageId == null)
+        while (message.ChatMessageUuid == null)
         {
             if (DateTimeOffset.UtcNow > patienceEnds) return false;
             if (message.Status is SentMessageTrackerStatus.Lost or SentMessageTrackerStatus.NotSending) return false;
@@ -557,12 +559,13 @@ public class ChatBot
     }
 
     public class SentMessageNotFoundException : Exception;
-    
+
     private void OnUsersJoined(object sender, List<UserModel> users, UsersJsonModel jsonPayload)
     {
         var settings = SettingsProvider.GetMultipleValuesAsync([BuiltIn.Keys.GambaSeshUserId, BuiltIn.Keys.GambaSeshDetectEnabled, BuiltIn.Keys.BotKeesSeen])
             .Result;
         _logger.Debug($"Received {users.Count} user join events");
+        _currentUsersInChat.AddRange(users);
         using var db = new ApplicationDbContext();
         foreach (var user in users)
         {
@@ -605,6 +608,7 @@ public class ChatBot
 
     private void OnUsersParted(object sender, List<int> userIds)
     {
+        _currentUsersInChat.RemoveAll(u => userIds.Contains(u.Id));
         var settings = SettingsProvider.GetMultipleValuesAsync([BuiltIn.Keys.GambaSeshUserId, BuiltIn.Keys.GambaSeshDetectEnabled])
             .Result;
         if (userIds.Contains(settings[BuiltIn.Keys.GambaSeshUserId].ToType<int>()) && settings[BuiltIn.Keys.GambaSeshDetectEnabled].ToBoolean())
@@ -652,6 +656,7 @@ public class ChatBot
         _logger.Error($"Sneedchat disconnected due to {disconnectionInfo.Type}");
         _logger.Error($"Close Status => {disconnectionInfo.CloseStatus}; Close Status Description => {disconnectionInfo.CloseStatusDescription}");
         _logger.Error(disconnectionInfo.Exception);
+        _currentUsersInChat.Clear();
         if (disconnectionInfo.Exception != null && disconnectionInfo.Exception.Message.Contains("status code '203'"))
         {
             _logger.Info("Chat 203'd, getting a new token");
@@ -670,6 +675,11 @@ public class ChatBot
         GambaSeshPresent = false;
         _logger.Info($"Rejoining {roomId}");
         KfClient.JoinRoom(roomId);
+    }
+
+    public UserModel? FindUserByName(string username)
+    {
+        return _currentUsersInChat.FirstOrDefault(u => u.Username.Equals(username, StringComparison.CurrentCulture));
     }
 
     public enum LengthLimitBehavior

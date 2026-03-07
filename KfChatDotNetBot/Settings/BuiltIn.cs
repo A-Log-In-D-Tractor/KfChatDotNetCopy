@@ -316,6 +316,8 @@ public static class BuiltIn
         public static string CaptureYtDlpWorkingDirectory = "Capture.YtDlp.WorkingDirectory";
         [BuiltInSetting("Path of the yt-dlp binary", SettingValueType.Text, "/usr/local/bin/yt-dlp")]
         public static string CaptureYtDlpBinaryPath = "Capture.YtDlp.BinaryPath";
+        [BuiltInSetting("Path of the FFmpeg binary", SettingValueType.Text, "ffmpeg")]
+        public static string FFmpegBinaryPath = "FFmpeg.BinaryPath";
         [BuiltInSetting("User-Agent that gets passed to yt-dlp --user-agent", SettingValueType.Text, 
             "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0")]
         public static string CaptureYtDlpUserAgent = "Capture.YtDlp.UserAgent";
@@ -540,6 +542,8 @@ public static class BuiltIn
         public static string KasinoRouletteCountdownDuration = "Kasino.Roulette.CountdownDuration";
         [BuiltInSetting("Whether Xeet posting is enabled", SettingValueType.Boolean, "true", BooleanRegex)]
         public static string XeetEnabled = "Xeet.Enabled";
+        [BuiltInSetting("Maximum video duration in seconds for Xeet embeds", SettingValueType.Text, "120", WholeNumberRegex)]
+        public static string XeetMaxVideoDurationSeconds = "Xeet.MaxVideoDurationSeconds";
         [BuiltInSetting("Connection string for bot's Redis", SettingValueType.Text)]
         public static string BotRedisConnectionString = "Bot.RedisConnectionString";
         [BuiltInSetting("Whether to automatically rehost images when they're added", SettingValueType.Boolean, "true",
@@ -547,6 +551,14 @@ public static class BuiltIn
         public static string BotImageRehostEnabled = "Bot.Image.RehostEnabled";
         [BuiltInSetting("Domain to look for when determining whether to rehost", SettingValueType.Text, "i.ddos.lgbt")]
         public static string BotImageRehostDomain = "Bot.Image.RehostDomain";
+        [BuiltInSetting("Array of cookies as a shitty hack to get Rainbet going", SettingValueType.Array, "[]")]
+        public static string RainbetCookies = "Rainbet.Cookies";
+        [BuiltInSetting("Bossman's super secret user ID", SettingValueType.Text, "b5d4b169-2160-4b18-8865-6fe5dffa5c49")]
+        public static string ShuffleBmjUserId = "Shuffle.BmjUserId";
+        [BuiltInSetting("Bossman's current VIP level for reducing GraphQL hits", SettingValueType.Text, "SAPPHIRE_5")]
+        public static string ShuffleBmjVipLevel = "Shuffle.BmjVipLevel";
+        [BuiltInSetting("Whether OpenAI moderation is enabled", SettingValueType.Boolean, "false", BooleanRegex)]
+        public static string OpenAiModerationEnabled = "OpenAI.ModerationEnabled";
     }
 }
 

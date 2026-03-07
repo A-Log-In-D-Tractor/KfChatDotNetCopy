@@ -143,6 +143,7 @@ public class PlinkoCommand : ICommand
         {
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, you can only play with 1 - 10 balls at a time", true, autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
         if (gambler.Balance < wager * numberOfBalls)
@@ -150,6 +151,7 @@ public class PlinkoCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, your balance of {await gambler.Balance.FormatKasinoCurrencyAsync()} isn't enough for this wager.",
                 true, autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
         
@@ -158,6 +160,7 @@ public class PlinkoCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, you have to wager more than {await wager.FormatKasinoCurrencyAsync()}", true,
                 autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
         
@@ -170,7 +173,7 @@ public class PlinkoCommand : ICommand
         //game starts here
         int breakCounter = 0;
         var plinkoMessageID = await botInstance.SendChatMessageAsync(PlinkoBoardDisplay(ballsInPlay), true, autoDeleteAfter: cleanupDelay);
-        while (plinkoMessageID.ChatMessageId == null && breakCounter < 1000) { 
+        while (plinkoMessageID.ChatMessageUuid == null && breakCounter < 1000) { 
             await Task.Delay(100, ctx);
             breakCounter++;
         }
@@ -192,7 +195,7 @@ public class PlinkoCommand : ICommand
                 ballsNotInPlay.RemoveAt(0);
             }
             PlinkoMessage = PlinkoBoardDisplay(ballsInPlay) + "[br]" + lastPayoutMessage;
-            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageId!.Value,PlinkoMessage);
+            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageUuid!, PlinkoMessage);
             if (ballsInPlay[0].POSITION.row == DIFFICULTY - 1) //once your ball has reached the bottom calculate the payout
             {
                 currentPayout = wager * PlinkoPayoutBoard[ballsInPlay[0].POSITION.col];
@@ -216,7 +219,7 @@ public class PlinkoCommand : ICommand
 
             await Task.Delay(300, ctx);
             PlinkoMessage = PlinkoBoardDisplay(ballsInPlay) + "[br]" + lastPayoutMessage;
-            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageId!.Value, PlinkoMessage);
+            await botInstance.KfClient.EditMessageAsync(plinkoMessageID.ChatMessageUuid!, PlinkoMessage);
             await Task.Delay(300, ctx);
 
         }

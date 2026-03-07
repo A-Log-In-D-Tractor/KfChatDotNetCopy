@@ -67,7 +67,7 @@ public class RainCommand : ICommand
             var pluralSuffix = string.Empty;
             if (rain.Participants.Count > 0) pluralSuffix = "s";
             await botInstance.SendChatMessageAsync(
-                $"LFG {user.FormatUsername()} is now a participant! There's now {rain.Participants.Count + 1} participant{pluralSuffix}",
+                $"LFG {user.FormatUsername()} is now a participant! There's now {rain.Participants.Count + 1} participant{pluralSuffix}! Type [ditto]!rain[/ditto] to participate",
                 true, autoDeleteAfter: cleanupDelay);
             return;
         }
@@ -94,6 +94,14 @@ public class RainCommand : ICommand
             return;
         }
 
+        decimal rainMin = 100;
+        if (decAmount < rainMin)
+        {
+            await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, rain at least {await rainMin.FormatKasinoCurrencyAsync()}", true,
+                autoDeleteAfter: cleanupDelay);
+            return;
+        }
+
         rain = new KasinoRainModel
         {
             Participants = [],
@@ -104,7 +112,7 @@ public class RainCommand : ICommand
         };
         var timer = 60;
         var msg = await botInstance.SendChatMessageAsync(
-            $"{user.FormatUsername()} is making it rain with {await decAmount.FormatKasinoCurrencyAsync()}! Type !rain in the next {timer} seconds to join.",
+            $"🌧️🌧️ {user.FormatUsername()} is making it rain with {await decAmount.FormatKasinoCurrencyAsync()}! Type [ditto]!rain[/ditto] in the next {timer} seconds to join.",
             true);
         var result = await botInstance.WaitForChatMessageAsync(msg, ct: ctx);
         if (!result)
@@ -120,10 +128,12 @@ public class RainCommand : ICommand
         {
             timer--;
             await Task.Delay(1000, ctx);
-            await botInstance.KfClient.EditMessageAsync(msg.ChatMessageId!.Value,
-                $"{user.FormatUsername()} is making it rain with {await decAmount.FormatKasinoCurrencyAsync()}! Type !rain in the next {timer} seconds to join.");
+            await botInstance.KfClient.EditMessageAsync(msg.ChatMessageUuid!,
+                $"🌧️🌧️ {user.FormatUsername()} is making it rain with {await decAmount.FormatKasinoCurrencyAsync()}! Type [ditto]!rain[/ditto] in the next {timer} seconds to join.");
         }
-        await botInstance.KfClient.DeleteMessageAsync(msg.ChatMessageId!.Value);
+
+        await Task.Delay(100, ctx);
+        await botInstance.KfClient.DeleteMessageAsync(msg.ChatMessageUuid!);
         // At this point the timer should take care of things but truthfully it's a disaster and probably won't work
     }
 }

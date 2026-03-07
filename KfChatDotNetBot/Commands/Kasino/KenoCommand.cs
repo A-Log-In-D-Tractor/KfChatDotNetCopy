@@ -66,6 +66,7 @@ public class KenoCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, not enough arguments. !keno <wager> <number between 1 and 10>, or !keno <wager> and 10 will be selected automatically",
                 true, autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
 
@@ -90,6 +91,7 @@ public class KenoCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, your balance of {await gambler.Balance.FormatKasinoCurrencyAsync()} isn't enough for this wager.",
                 true, autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
         
@@ -98,6 +100,7 @@ public class KenoCommand : ICommand
             await botInstance.SendChatMessageAsync(
                 $"{user.FormatUsername()}, you have to wager more than {await wager.FormatKasinoCurrencyAsync()}", true,
                 autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
 
@@ -105,6 +108,7 @@ public class KenoCommand : ICommand
         {
             await botInstance.SendChatMessageAsync($"{user.FormatUsername()}, you can only pick numbers from 1 - 10",
                 true, autoDeleteAfter: cleanupDelay);
+            RateLimitService.RemoveMostRecentEntry(user, this);
             return;
         }
 
@@ -193,9 +197,9 @@ public class KenoCommand : ICommand
         }
 
         //you win
-        var win = wager * (decimal)payoutMulti;
+        var win = (wager * (decimal)payoutMulti) - wager;
         // Required to avoid compiler errors when trying to format it in the win message
-        newBalance = await Money.NewWagerAsync(gambler.Id, wager, wager * (decimal)payoutMulti, WagerGame.Keno, ct: ctx);
+        newBalance = await Money.NewWagerAsync(gambler.Id, wager, win, WagerGame.Keno, ct: ctx);
         await botInstance.SendChatMessageAsync(
             $"{user.FormatUsername()}, you [color={colors[BuiltIn.Keys.KiwiFarmsGreenColor].Value}]won {await win.FormatKasinoCurrencyAsync()} with a {payoutMulti}x multi![/color]. Your balance is now: {await newBalance.FormatKasinoCurrencyAsync()}.",
             true, autoDeleteAfter: cleanupDelay);
@@ -223,7 +227,7 @@ public class KenoCommand : ICommand
 
         _kenoTable = await botInstance.SendChatMessageAsync(displayMessage, true);
         var i = 0;
-        while (_kenoTable.ChatMessageId == null)
+        while (_kenoTable.ChatMessageUuid == null)
         {
             i++;
             if (_kenoTable.Status is SentMessageTrackerStatus.NotSending or SentMessageTrackerStatus.Lost) return;
@@ -231,7 +235,7 @@ public class KenoCommand : ICommand
             await Task.Delay(100);
         }
 
-        if (_kenoTable.ChatMessageId == null)
+        if (_kenoTable.ChatMessageUuid == null)
         {
             throw new Exception($"_kenoTable chat message ID never got populated. Tracker status is: {_kenoTable?.Status}");
         }
@@ -265,7 +269,7 @@ public class KenoCommand : ICommand
                 }
                 displayMessage += "[br]";
             }
-            await botInstance.KfClient.EditMessageAsync(_kenoTable.ChatMessageId!.Value, displayMessage);
+            await botInstance.KfClient.EditMessageAsync(_kenoTable.ChatMessageUuid, displayMessage);
             await Task.Delay(frameDelay);
             if (displayMessage.Length <= 79 && displayMessage.Contains(BlankSpaceDisplay) &&
                 (displayMessage.Contains(CasinoNumberDisplay) || displayMessage.Contains(MatchRevealDisplay) ||

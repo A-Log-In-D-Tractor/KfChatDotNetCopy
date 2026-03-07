@@ -183,7 +183,7 @@ public class BotServices
         }
         _rainbet = new RainbetWs(settings[BuiltIn.Keys.Proxy].Value, _cancellationToken);
         _rainbet.OnRainbetBet += OnRainbetBet;
-        await _rainbet.RefreshCookies();
+        //await _rainbet.RefreshCookies();
         await _rainbet.StartWsClient();
         _logger.Info("Built Rainbet Websocket");
     }
@@ -744,19 +744,19 @@ public class BotServices
     private async Task OnYeetWinEditTaskAsync(SentMessageTrackerModel oldMsg, string newMsg)
     {
         var i = 0;
-        while (oldMsg.ChatMessageId == null && i < 50)
+        while (oldMsg.ChatMessageUuid == null && i < 50)
         {
             await Task.Delay(100, _cancellationToken);
             i++;
         }
 
-        if (oldMsg.ChatMessageId == null)
+        if (oldMsg.ChatMessageUuid == null)
         {
             _logger.Error($"Timed out waiting to figure out our message ID");
             return;
         }
 
-        await _chatBot.KfClient.EditMessageAsync(oldMsg.ChatMessageId.Value, newMsg);
+        await _chatBot.KfClient.EditMessageAsync(oldMsg.ChatMessageUuid, newMsg);
     }
     
     private void OnHowlggBetHistory(object sender, HowlggBetHistoryResponseModel data)
@@ -853,7 +853,7 @@ public class BotServices
     // TODO: Figure out why this never works
     private void DiscordOnPresenceUpdated(object sender, DiscordPresenceUpdateModel presence)
     {
-        var settings = SettingsProvider.GetMultipleValuesAsync([BuiltIn.Keys.DiscordBmjId, BuiltIn.Keys.DiscordIcon]).Result;
+        var settings = SettingsProvider.GetMultipleValuesAsync([BuiltIn.Keys.DiscordBmjId, BuiltIn.Keys.DiscordIcon, BuiltIn.Keys.TwitchBossmanJackUsername]).Result;
         if (presence.User.Id != settings[BuiltIn.Keys.DiscordBmjId].Value)
         {
             return;
@@ -865,7 +865,12 @@ public class BotServices
         // }
         // _lastDiscordStatus = presence.Status;
         var clientStatus = presence.ClientStatus.Keys.Aggregate(string.Empty, (current, device) => current + $"{device} is {presence.ClientStatus[device]}; ");
-        _chatBot.SendChatMessage($"[img]{settings[BuiltIn.Keys.DiscordIcon].Value}[/img] {presence.User.GlobalName ?? presence.User.Username} has updated his Discord presence: {clientStatus}");
+        // Typically means offline
+        if (presence.ClientStatus.Count == 0)
+        {
+            clientStatus = presence.Status;
+        }
+        _chatBot.SendChatMessage($"[img]{settings[BuiltIn.Keys.DiscordIcon].Value}[/img] {presence.User.GlobalName ?? presence.User.Username ?? settings[BuiltIn.Keys.TwitchBossmanJackUsername].Value} has updated his Discord presence to {clientStatus}");
         UpdateBossmanLastSighting($"going {presence.Status} on Discord").Wait(_cancellationToken);
     }
 
@@ -926,7 +931,7 @@ public class BotServices
                 BuiltIn.Keys.KiwiFarmsRedColor, BuiltIn.Keys.KiwiFarmsGreenColor
             ]);
         var patience = 0;
-        while (msg.ChatMessageId == null)
+        while (msg.ChatMessageUuid == null)
         {
             patience++;
             if (msg.Status is SentMessageTrackerStatus.Lost or SentMessageTrackerStatus.NotSending || patience > 50)
@@ -943,11 +948,11 @@ public class BotServices
         {
             if (seconds % 2 == 0)
             {
-                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageId.Value, $"[color={settings[BuiltIn.Keys.KiwiFarmsGreenColor].Value}]{msg.Message}[/color]");
+                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid, $"[color={settings[BuiltIn.Keys.KiwiFarmsGreenColor].Value}]{msg.Message}[/color]");
             }
             else
             {
-                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageId.Value, $"[color={settings[BuiltIn.Keys.KiwiFarmsRedColor].Value}]{msg.Message}[/color]");
+                await _chatBot.KfClient.EditMessageAsync(msg.ChatMessageUuid, $"[color={settings[BuiltIn.Keys.KiwiFarmsRedColor].Value}]{msg.Message}[/color]");
             }
 
             await Task.Delay(1000, _cancellationToken);
@@ -960,24 +965,51 @@ public class BotServices
         _logger.Error("Credentials failed to validate.");
     }
 
-    private void ShuffleOnLatestBetUpdated(object sender, ShuffleLatestBetModel bet)
+    private void ShuffleOnLatestBetUpdated(object sender, ShuffleLatestBetModel bet, bool isDotUs)
     {
         var settings = SettingsProvider
             .GetMultipleValuesAsync([
                 BuiltIn.Keys.ShuffleBmjUsername, BuiltIn.Keys.ShuffleDotUsBmjUsername,
-                BuiltIn.Keys.KiwiFarmsGreenColor, BuiltIn.Keys.KiwiFarmsRedColor
+                BuiltIn.Keys.KiwiFarmsGreenColor, BuiltIn.Keys.KiwiFarmsRedColor,
+                BuiltIn.Keys.ShuffleBmjUserId, BuiltIn.Keys.ShuffleBmjVipLevel
             ]).Result;
         _logger.Trace("Shuffle bet has arrived");
-        bool isDotUs;
+        bool offlineBet = false;
+        if (bet.Username == null && bet.VipLevel == settings[BuiltIn.Keys.ShuffleBmjVipLevel].Value && !CheckBmjIsLive().Result && !isDotUs)
+        {
+            _logger.Info($"Checking for potential offline bet {bet.Id}");
+            string? betOwner;
+            try
+            {
+                betOwner = _shuffle?.GetBetUser(bet.Id).Result;
+            }
+            catch (Exception e)
+            {
+                _logger.Error($"Caught an error when trying to get {bet.Id}");
+                _logger.Error(e);
+                return;
+            }
+            if (betOwner == null)
+            {
+                _logger.Error($"Failed to get the bet owner for {bet.Id}");
+                return;
+            }
+            _logger.Info($"Got user ID {betOwner}");
+
+            if (betOwner != settings[BuiltIn.Keys.ShuffleBmjUserId].Value) return;
+            offlineBet = true;
+        }
         if (bet.Username == settings[BuiltIn.Keys.ShuffleBmjUsername].Value)
         {
-            isDotUs = false;
             UpdateBossmanLastSighting($"betting {bet.Amount} {bet.Currency} on {bet.GameName} at Shuffle.com").Wait(_cancellationToken);
         }
         else if (bet.Username == settings[BuiltIn.Keys.ShuffleDotUsBmjUsername].Value)
         {
-            isDotUs = true;
             UpdateBossmanLastSighting($"betting {bet.Amount} {bet.Currency} on {bet.GameName} at Shuffle.us").Wait(_cancellationToken);
+        }
+        else if (offlineBet)
+        {
+            UpdateBossmanLastSighting($"betting {bet.Amount} {bet.Currency} on {bet.GameName} at Shuffle.com OFFLINE").Wait(_cancellationToken);
         }
         else
         {
@@ -1011,8 +1043,20 @@ public class BotServices
             if (settings[BuiltIn.Keys.CaptureEnabled].ToBoolean())
             {
                 _logger.Info("Capturing Bossman's stream");
-                _ = new StreamCapture($"https://www.twitch.tv/{settings[BuiltIn.Keys.TwitchBossmanJackUsername].Value}",
-                    StreamCaptureMethods.Streamlink,
+                var url = $"https://www.twitch.tv/{settings[BuiltIn.Keys.TwitchBossmanJackUsername].Value}";
+                var lockTable = SettingsProvider.GetValueAsync(BuiltIn.Keys.CaptureLockTable).Result
+                    .JsonDeserialize<Dictionary<string, string>>();
+                if (lockTable != null && lockTable.TryGetValue(url, out var value))
+                {
+                    if (File.Exists(value))
+                    {
+                        _logger.Warn($"Lock file ({value}) for {url} already exists, ignoring stream");
+                        UpdateBossmanLastSighting("maybe going live on Twitch, but was probably a Twitch error")
+                            .Wait(_cancellationToken);
+                        return;
+                    }
+                }
+                _ = new StreamCapture(url, StreamCaptureMethods.Streamlink,
                     new CaptureOverridesModel
                     {
                         CaptureYtDlpWorkingDirectory = settings[BuiltIn.Keys.CaptureStreamlinkBmjWorkingDirectory].Value
